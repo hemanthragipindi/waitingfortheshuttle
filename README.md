@@ -287,7 +287,7 @@ Example error responses:
 
 ## Configuration
 
-Copy each `.env.example` to `.env` for local development. Set `DATABASE_URL` and `JWT_SECRET_KEY` in `backend\.env` before running database-backed code. Never commit `.env` files or production secrets. Deployment instructions will be added with the corresponding implementation phase.
+Copy each `.env.example` to `.env` for local development. Set `DATABASE_URL` and `JWT_SECRET_KEY` in `backend\.env` before running database-backed code. Never commit `.env` files or production secrets. For the Vercel frontend, set the project root to `frontend`, build with `npm run build`, and publish `dist`. `frontend\vercel.json` rewrites client-side routes to `index.html` so direct navigation and refresh work with React Router.
 
 ## Validation
 
