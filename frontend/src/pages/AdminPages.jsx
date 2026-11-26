@@ -41,6 +41,13 @@ import { routesApi } from "../services/routes.js";
 import { shuttleStatusApi } from "../services/shuttleStatus.js";
 import { shuttlesApi } from "../services/shuttles.js";
 import { stopsApi } from "../services/stops.js";
+import {
+  labelFor,
+  serviceAreas,
+  serviceStatuses,
+  serviceTypes,
+  verificationStatuses,
+} from "../constants/transport.js";
 
 const feedbackCategories = [
   ["DELAY", "Delay"],
@@ -135,6 +142,7 @@ function dateToInput(value) {
 function makeInitialValues(fields, item) {
   return Object.fromEntries(fields.map((field) => {
     let value = item?.[field.name];
+    if (!item && value == null && field.default !== undefined) value = field.default;
     if (field.name === "stop_ids" && item) {
       value = item.route_stops?.map((row) => row.stop_id) || [];
     }
@@ -142,7 +150,6 @@ function makeInitialValues(fields, item) {
     if (field.type === "checkbox") value = item ? Boolean(value) : Boolean(field.default);
     if (field.type === "multi-select" || field.type === "ordered-select") value = value || [];
     if (field.type === "ordered-select") value = item ? value : [];
-    if (!item && value == null && field.default !== undefined) value = field.default;
     if (field.type === "select" && field.nullable && value == null) value = "";
     if (value == null && field.type !== "checkbox" && field.type !== "multi-select") value = "";
     return [field.name, value];
@@ -353,18 +360,26 @@ function ManagementPage({
 const stopFields = [
   { name: "name", label: "Stop name", type: "text", required: true, maxLength: 120 },
   { name: "description", label: "Description", type: "textarea", rows: 3, hint: "Optional details to help students find the stop." },
+  { name: "service_area", label: "Service area", type: "select", required: true, options: serviceAreas.map(([value, label]) => ({ value, label })), default: "LPU" },
+  { name: "verification_status", label: "Verification", type: "select", required: true, options: verificationStatuses.map(([value, label]) => ({ value, label })), default: "PENDING_VERIFICATION" },
   { name: "is_active", label: "Active stop", type: "checkbox", default: true, hint: "Inactive stops are hidden from students." },
 ];
 const routeFields = (stops) => [
   { name: "code", label: "Route code", type: "text", required: true, maxLength: 32, hint: "Letters, numbers, underscores, and hyphens." },
   { name: "name", label: "Route name", type: "text", required: true, maxLength: 120 },
+  { name: "service_area", label: "Service area", type: "select", required: true, options: serviceAreas.map(([value, label]) => ({ value, label })), default: "LPU" },
+  { name: "service_types", label: "Transport services", type: "multi-select", required: true, options: serviceTypes.map(([value, label]) => ({ value, label })), default: ["CAMPUS_SHUTTLE"], hint: "Select every service type that operates on this route." },
+  { name: "verification_status", label: "Verification", type: "select", required: true, options: verificationStatuses.map(([value, label]) => ({ value, label })), default: "PENDING_VERIFICATION" },
   { name: "estimated_duration_minutes", label: "Estimated duration (minutes)", type: "number", min: 1, nullable: true, hint: "Optional; do not enter an unverified estimate." },
   { name: "stop_ids", label: "Ordered route stops", type: "ordered-select", options: stops.map((stop) => ({ value: stop.id, label: stop.name })), hint: "Use the arrow controls to set the published stop order." },
   { name: "is_active", label: "Active route", type: "checkbox", default: true, hint: "Inactive routes are hidden from students." },
 ];
 const shuttleFields = (routes) => [
   { name: "vehicle_code", label: "Vehicle code", type: "text", required: true, maxLength: 32 },
-  { name: "capacity", label: "Passenger capacity", type: "number", min: 1, required: true },
+  { name: "capacity", label: "Passenger capacity", type: "number", min: 1, nullable: true, hint: "Optional for external services when capacity is not published." },
+  { name: "service_type", label: "Transport service", type: "select", required: true, options: serviceTypes.map(([value, label]) => ({ value, label })), default: "CAMPUS_SHUTTLE" },
+  { name: "is_university_operated", label: "University-operated service", type: "checkbox", default: true, hint: "Clear distinction between university services and external public transport." },
+  { name: "verification_status", label: "Verification", type: "select", required: true, options: verificationStatuses.map(([value, label]) => ({ value, label })), default: "PENDING_VERIFICATION" },
   { name: "route_id", label: "Assigned route", type: "select", nullable: true, options: routes.map((route) => ({ value: route.id, label: `${route.code} · ${route.name}` })) },
   { name: "is_active", label: "Active shuttle", type: "checkbox", default: true, hint: "Inactive shuttles are hidden from student lists." },
 ];
@@ -379,6 +394,8 @@ const announcementFields = [
 export function Stops() {
   return <ManagementPage title="Stop management" eyebrow="CAMPUS DIRECTORY" description="Create and maintain the stops students can browse." noun="Stop" service={stopsApi} fields={stopFields} columns={[
     { key: "name", label: "Stop name" },
+    { key: "service_area", label: "Area", render: (item) => labelFor(serviceAreas, item.service_area) },
+    { key: "verification_status", label: "Verification", render: (item) => labelFor(verificationStatuses, item.verification_status) },
     { key: "description", label: "Description", render: (item) => item.description || "—" },
     { key: "is_active", label: "Status", render: (item) => <span className={`table-state ${item.is_active ? "table-state--active" : ""}`}>{item.is_active ? "Active" : "Inactive"}</span> },
   ]} activeField="is_active" />;
@@ -387,9 +404,11 @@ export function Stops() {
 export function Routes() {
   const stopOptions = useApi(() => stopsApi.list({ limit: 100, is_active: true }), []);
   const stops = stopOptions.data?.items || [];
-  return <ManagementPage title="Route management" eyebrow="CAMPUS NETWORK" description="Create routes, maintain stop ordering, and configure journey duration only when verified." noun="Route" service={routesApi} fields={routeFields(stops)} columns={[
+  return <ManagementPage title="Route management" eyebrow="CAMPUS NETWORK" description="Create routes, maintain ordered stops, and publish only verified services." noun="Route" service={routesApi} fields={routeFields(stops)} columns={[
     { key: "code", label: "Route code", render: (item) => <span className="route-code">{item.code}</span> },
     { key: "name", label: "Route name" },
+    { key: "service_area", label: "Area", render: (item) => labelFor(serviceAreas, item.service_area) },
+    { key: "service_types", label: "Services", render: (item) => item.service_types?.map((type) => labelFor(serviceTypes, type)).join(", ") || "—" },
     { key: "route_stops", label: "Stops", render: (item) => item.route_stops?.length ?? 0 },
     { key: "estimated_duration_minutes", label: "Est. duration", render: (item) => item.estimated_duration_minutes ? `${item.estimated_duration_minutes} min` : "Not configured" },
     { key: "is_active", label: "Status", render: (item) => <span className={`table-state ${item.is_active ? "table-state--active" : ""}`}>{item.is_active ? "Active" : "Inactive"}</span> },
@@ -400,8 +419,10 @@ export function Shuttles() {
   const routeOptions = useApi(() => routesApi.list({ limit: 100, is_active: true }), []);
   const routes = routeOptions.data?.items || [];
   const routeNames = Object.fromEntries(routes.map((route) => [route.id, `${route.code} · ${route.name}`]));
-  return <ManagementPage title="Shuttle management" eyebrow="VEHICLE REGISTER" description="Manage vehicle records and their active route assignments." noun="Shuttle" service={shuttlesApi} fields={shuttleFields(routes)} columns={[
+  return <ManagementPage title="Service management" eyebrow="TRANSPORT REGISTER" description="Manage university-operated services and external public transport records." noun="Shuttle" service={shuttlesApi} fields={shuttleFields(routes)} columns={[
     { key: "vehicle_code", label: "Vehicle code" },
+    { key: "service_type", label: "Service", render: (item) => labelFor(serviceTypes, item.service_type) },
+    { key: "is_university_operated", label: "Operator", render: (item) => item.is_university_operated ? "University-operated" : "External public transport" },
     { key: "capacity", label: "Capacity" },
     { key: "route_id", label: "Assigned route", render: (item) => routeNames[item.route_id] || (item.route_id ? "Route not available" : "Unassigned") },
     { key: "is_active", label: "Status", render: (item) => <span className={`table-state ${item.is_active ? "table-state--active" : ""}`}>{item.is_active ? "Active" : "Inactive"}</span> },
@@ -449,7 +470,7 @@ function StatusManagement() {
       <div className="admin-data-note"><Clock3 size={16} /> Each submission is stored as a timestamped history record; the newest recorded update is displayed.</div>
       {formOpen && <Modal title="Record shuttle status" onClose={() => setFormOpen(false)}><form className="portal-form modal__form" onSubmit={submit}>
         {shuttles.loading ? <Loading /> : shuttles.error ? <ErrorState message={shuttles.error} onRetry={shuttles.refresh} /> : <label className="form-field"><span>Shuttle <i>*</i></span><select required value={form.shuttle_id} onChange={(event) => setForm((current) => ({ ...current, shuttle_id: event.target.value }))}><option value="">Choose an active shuttle</option>{shuttles.data.items.map((shuttle) => <option key={shuttle.id} value={shuttle.id}>{shuttle.vehicle_code}</option>)}</select>{!shuttles.data.items.length && <small className="field-hint">No active shuttles are available.</small>}</label>}
-        <label className="form-field"><span>Service status <i>*</i></span><select value={form.status} onChange={(event) => setForm((current) => ({ ...current, status: event.target.value }))}>{[["ON_TIME", "On time"], ["DELAYED", "Delayed"], ["UNAVAILABLE", "Out of service"], ["NOT_UPDATED", "Not updated"]].map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>
+        <label className="form-field"><span>Service status <i>*</i></span><select value={form.status} onChange={(event) => setForm((current) => ({ ...current, status: event.target.value }))}>{serviceStatuses.map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>
         <FormField as="textarea" name="message" label="Administrator message" hint="Optional. Do not enter an estimated arrival unless it is from a verified source." rows={3} maxLength={2000} value={form.message} onChange={(event) => setForm((current) => ({ ...current, message: event.target.value }))} />
         {error && <p className="form-error" role="alert">{error}</p>}
         <div className="modal__actions"><Button type="button" variant="secondary" onClick={() => setFormOpen(false)}>Cancel</Button><Button type="submit" disabled={submitting || shuttles.loading || !shuttles.data?.items?.length}>{submitting ? "Recording…" : "Record update"}</Button></div>

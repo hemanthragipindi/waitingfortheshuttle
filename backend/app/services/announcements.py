@@ -21,13 +21,14 @@ def _published_filter(now: datetime):
 
 def list_announcements(
     db: Session,
-    current_user: User,
+    current_user: User | None,
     *,
     skip: int,
     limit: int,
 ) -> tuple[list[Announcement], int]:
     filters = []
-    if current_user.role == UserRole.STUDENT.value:
+    is_admin = current_user is not None and current_user.role == UserRole.ADMIN.value
+    if not is_admin:
         filters.extend(_published_filter(datetime.now(UTC)))
 
     total = db.scalar(select(func.count(Announcement.id)).where(*filters)) or 0
@@ -57,10 +58,11 @@ def _get_announcement(db: Session, announcement_id: UUID) -> Announcement:
 def get_announcement(
     db: Session,
     announcement_id: UUID,
-    current_user: User,
+    current_user: User | None,
 ) -> Announcement:
     announcement = _get_announcement(db, announcement_id)
-    if current_user.role == UserRole.STUDENT.value:
+    is_admin = current_user is not None and current_user.role == UserRole.ADMIN.value
+    if not is_admin:
         now = datetime.now(UTC)
         starts_at = announcement.starts_at
         ends_at = announcement.ends_at
@@ -124,7 +126,7 @@ def update_announcement(
     updates = payload.model_dump(exclude_unset=True)
     if not updates:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Provide at least one announcement field to update.",
         )
 
@@ -136,7 +138,7 @@ def update_announcement(
         ends_at = ends_at.replace(tzinfo=timezone.utc)
     if starts_at is not None and ends_at is not None and ends_at <= starts_at:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="ends_at must be later than starts_at.",
         )
 

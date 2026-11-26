@@ -42,6 +42,26 @@ def get_current_user(
     return user
 
 
+def get_optional_current_user(
+    request: Request,
+    db: Session = Depends(get_db_session),
+) -> User | None:
+    settings = get_settings()
+    token = request.cookies.get(settings.auth_cookie_name)
+    if not token:
+        return None
+
+    try:
+        user_id = decode_access_token(token)
+    except InvalidAccessToken:
+        return None
+
+    user = db.get(User, user_id)
+    if user is None or not user.is_active:
+        return None
+    return user
+
+
 def get_current_admin(
     current_user: User = Depends(get_current_user),
 ) -> User:

@@ -17,7 +17,7 @@ class ShuttleStatus(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "shuttle_status"
     __table_args__ = (
         CheckConstraint(
-            "status IN ('ON_TIME', 'DELAYED', 'UNAVAILABLE', 'NOT_UPDATED')",
+            "status IN ('ON_TIME', 'DELAYED', 'UNAVAILABLE', 'CANCELLED', 'UNKNOWN', 'NOT_UPDATED')",
             name="ck_shuttle_status_value",
         ),
         Index("ix_shuttle_status_shuttle_created", "shuttle_id", "created_at"),

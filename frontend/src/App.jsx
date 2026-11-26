@@ -25,17 +25,25 @@ export default function App() {
           <Route path="/admin/login" element={<LoginPage isAdmin />} />
           <Route path="/unauthorized" element={<UnauthorizedPage />} />
 
-          <Route path="/student/dashboard" element={<Secure role="STUDENT"><DashboardPage /></Secure>} />
-          <Route path="/student/stops" element={<Secure role="STUDENT"><StudentPages.Stops /></Secure>} />
-          <Route path="/student/stops/:stopId" element={<Secure role="STUDENT"><StudentPages.StopDetails /></Secure>} />
-          <Route path="/student/routes" element={<Secure role="STUDENT"><StudentPages.Routes /></Secure>} />
-          <Route path="/student/routes/:routeId" element={<Secure role="STUDENT"><StudentPages.RouteDetails /></Secure>} />
-          <Route path="/student/shuttles" element={<Secure role="STUDENT"><StudentPages.Shuttles /></Secure>} />
-          <Route path="/student/shuttles/:shuttleId" element={<Secure role="STUDENT"><StudentPages.ShuttleDetails /></Secure>} />
-          <Route path="/student/announcements" element={<Secure role="STUDENT"><StudentPages.Announcements /></Secure>} />
+          <Route path="/student/dashboard" element={<DashboardPage />} />
+          <Route path="/student/stops" element={<StudentPages.Stops />} />
+          <Route path="/student/stops/:stopId" element={<StudentPages.StopDetails />} />
+          <Route path="/student/routes" element={<StudentPages.Routes />} />
+          <Route path="/student/routes/:routeId" element={<StudentPages.RouteDetails />} />
+          <Route path="/student/shuttles" element={<StudentPages.Shuttles />} />
+          <Route path="/student/shuttles/:shuttleId" element={<StudentPages.ShuttleDetails />} />
+          <Route path="/student/announcements" element={<StudentPages.Announcements />} />
           <Route path="/student/feedback" element={<Secure role="STUDENT"><StudentPages.Feedback /></Secure>} />
           <Route path="/student/my-feedback" element={<Secure role="STUDENT"><StudentPages.MyFeedback /></Secure>} />
           <Route path="/student/profile" element={<Secure role="STUDENT"><StudentPages.Profile /></Secure>} />
+
+          <Route path="/stops" element={<StudentPages.Stops />} />
+          <Route path="/stops/:stopId" element={<StudentPages.StopDetails />} />
+          <Route path="/routes" element={<StudentPages.Routes />} />
+          <Route path="/routes/:routeId" element={<StudentPages.RouteDetails />} />
+          <Route path="/shuttles" element={<StudentPages.Shuttles />} />
+          <Route path="/shuttles/:shuttleId" element={<StudentPages.ShuttleDetails />} />
+          <Route path="/announcements" element={<StudentPages.Announcements />} />
 
           <Route path="/admin" element={<Secure role="ADMIN"><AdminPages.Dashboard /></Secure>} />
           <Route path="/admin/stops" element={<Secure role="ADMIN"><AdminPages.Stops /></Secure>} />

@@ -5,7 +5,7 @@ from fastapi import HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, joinedload
 
-from app.core.enums import ShuttleServiceStatus, UserRole
+from app.core.enums import ShuttleServiceStatus, UserRole, VerificationStatus
 from app.models.route import Route
 from app.models.shuttle import Shuttle
 from app.models.shuttle_status import ShuttleStatus
@@ -21,7 +21,7 @@ from app.schemas.shuttles import ShuttleRead
 def _get_shuttle_for_user(
     db: Session,
     shuttle_id: UUID,
-    current_user: User,
+    current_user: User | None,
     *,
     lock: bool = False,
 ) -> Shuttle:
@@ -29,8 +29,10 @@ def _get_shuttle_for_user(
     if lock:
         query = query.with_for_update()
     shuttle = db.scalar(query)
+    is_admin = current_user is not None and current_user.role == UserRole.ADMIN.value
     if shuttle is None or (
-        current_user.role == UserRole.STUDENT.value and not shuttle.is_active
+        not is_admin
+        and (not shuttle.is_active or shuttle.verification_status != VerificationStatus.VERIFIED.value)
     ):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -71,16 +73,50 @@ def _current_status_read(
 def _current_status_rows(
     db: Session,
     *,
-    current_user: User,
+    current_user: User | None,
     route_id: UUID | None,
+    service_area: str | None,
+    service_type: str | None,
+    status_filter: str | None,
     skip: int,
     limit: int,
 ) -> tuple[list[ShuttleStatusCurrentRead], int]:
     filters = []
-    if current_user.role == UserRole.STUDENT.value:
+    is_admin = current_user is not None and current_user.role == UserRole.ADMIN.value
+    if not is_admin:
         filters.append(Shuttle.is_active.is_(True))
+        filters.append(Shuttle.verification_status == VerificationStatus.VERIFIED.value)
     if route_id is not None:
         filters.append(Shuttle.route_id == route_id)
+    if service_area:
+        filters.append(Shuttle.route.has(Route.service_area == service_area))
+    if service_type:
+        filters.append(Shuttle.service_type == service_type)
+    if status_filter:
+        latest_status = (
+            select(
+                ShuttleStatus.shuttle_id,
+                ShuttleStatus.status,
+                func.row_number()
+                .over(
+                    partition_by=ShuttleStatus.shuttle_id,
+                    order_by=(
+                        ShuttleStatus.created_at.desc(),
+                        ShuttleStatus.id.desc(),
+                    ),
+                )
+                .label("row_number"),
+            )
+            .subquery()
+        )
+        filters.append(
+            Shuttle.id.in_(
+                select(latest_status.c.shuttle_id).where(
+                    latest_status.c.row_number == 1,
+                    latest_status.c.status == status_filter,
+                )
+            )
+        )
 
     total = db.scalar(select(func.count(Shuttle.id)).where(*filters)) or 0
     latest = _latest_status_query()
@@ -105,15 +141,21 @@ def _current_status_rows(
 
 def list_current_statuses(
     db: Session,
-    current_user: User,
+    current_user: User | None,
     *,
     skip: int,
     limit: int,
+    service_area: str | None = None,
+    service_type: str | None = None,
+    status_filter: str | None = None,
 ) -> tuple[list[ShuttleStatusCurrentRead], int]:
     return _current_status_rows(
         db,
         current_user=current_user,
         route_id=None,
+        service_area=service_area,
+        service_type=service_type,
+        status_filter=status_filter,
         skip=skip,
         limit=limit,
     )
@@ -122,14 +164,19 @@ def list_current_statuses(
 def list_route_current_statuses(
     db: Session,
     route_id: UUID,
-    current_user: User,
+    current_user: User | None,
     *,
     skip: int,
     limit: int,
+    service_area: str | None = None,
+    service_type: str | None = None,
+    status_filter: str | None = None,
 ) -> tuple[list[ShuttleStatusCurrentRead], int]:
     route = db.get(Route, route_id)
+    is_admin = current_user is not None and current_user.role == UserRole.ADMIN.value
     if route is None or (
-        current_user.role == UserRole.STUDENT.value and not route.is_active
+        not is_admin
+        and (not route.is_active or route.verification_status != VerificationStatus.VERIFIED.value)
     ):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -139,6 +186,9 @@ def list_route_current_statuses(
         db,
         current_user=current_user,
         route_id=route_id,
+        service_area=service_area,
+        service_type=service_type,
+        status_filter=status_filter,
         skip=skip,
         limit=limit,
     )
@@ -147,7 +197,7 @@ def list_route_current_statuses(
 def get_current_status(
     db: Session,
     shuttle_id: UUID,
-    current_user: User,
+    current_user: User | None,
 ) -> ShuttleStatusCurrentRead:
     shuttle = _get_shuttle_for_user(db, shuttle_id, current_user)
     latest_status = db.scalar(
@@ -162,7 +212,7 @@ def get_current_status(
 def list_status_history(
     db: Session,
     shuttle_id: UUID,
-    current_user: User,
+    current_user: User | None,
     *,
     skip: int,
     limit: int,

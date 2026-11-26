@@ -3,7 +3,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query, Response, status
 from sqlalchemy.orm import Session
 
-from app.api.dependencies import get_current_admin, get_current_user
+from app.api.dependencies import get_current_admin, get_optional_current_user
 from app.db.session import get_db_session
 from app.models.announcement import Announcement
 from app.models.user import User
@@ -29,7 +29,7 @@ router = APIRouter(prefix="/announcements", tags=["announcements"])
 def read_announcements(
     skip: int = Query(default=0, ge=0),
     limit: int = Query(default=50, ge=1, le=100),
-    current_user: User = Depends(get_current_user),
+    current_user: User | None = Depends(get_optional_current_user),
     db: Session = Depends(get_db_session),
 ) -> Page[AnnouncementRead]:
     items, total = list_announcements(
@@ -44,7 +44,7 @@ def read_announcements(
 @router.get("/{announcement_id}", response_model=AnnouncementRead)
 def read_announcement(
     announcement_id: UUID,
-    current_user: User = Depends(get_current_user),
+    current_user: User | None = Depends(get_optional_current_user),
     db: Session = Depends(get_db_session),
 ) -> Announcement:
     return get_announcement(db, announcement_id, current_user)

@@ -3,11 +3,14 @@ from uuid import UUID
 from fastapi import HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.orm import Session, aliased, selectinload
 
-from app.core.enums import UserRole
+from app.core.enums import UserRole, VerificationStatus
 from app.models.route import Route
+from app.models.route_service_type import RouteServiceType
 from app.models.route_stop import RouteStop
+from app.models.shuttle import Shuttle
+from app.models.shuttle_status import ShuttleStatus
 from app.models.stop import Stop
 from app.models.user import User
 from app.schemas.routes import (
@@ -29,7 +32,8 @@ class DuplicateRouteStop(Exception):
 
 def _route_query():
     return select(Route).options(
-        selectinload(Route.route_stops).selectinload(RouteStop.stop)
+        selectinload(Route.route_stops).selectinload(RouteStop.stop),
+        selectinload(Route.service_types),
     )
 
 
@@ -39,6 +43,9 @@ def _route_response(route: Route, include_inactive_stops: bool) -> RouteRead:
         "code": route.code,
         "name": route.name,
         "estimated_duration_minutes": route.estimated_duration_minutes,
+        "service_area": route.service_area,
+        "service_types": [item.service_type for item in route.service_types],
+        "verification_status": route.verification_status,
         "is_active": route.is_active,
         "route_stops": [
             association
@@ -85,20 +92,74 @@ def _replace_route_stops(db: Session, route: Route, stops: list[Stop]) -> None:
 
 def list_routes(
     db: Session,
-    current_user: User,
+    current_user: User | None,
     *,
     query: str | None,
     is_active: bool | None,
+    service_area: str | None,
+    service_type: str | None,
+    destination: str | None,
+    status_filter: str | None,
     skip: int,
     limit: int,
 ) -> tuple[list[RouteRead], int]:
     filters = []
-    active_filter = True if current_user.role == UserRole.STUDENT.value else is_active
+    is_admin = current_user is not None and current_user.role == UserRole.ADMIN.value
+    active_filter = is_active if is_admin else True
     if active_filter is not None:
         filters.append(Route.is_active.is_(active_filter))
+    if not is_admin:
+        filters.append(Route.verification_status == VerificationStatus.VERIFIED.value)
     if query and query.strip():
         pattern = f"%{query.strip()}%"
         filters.append(Route.name.ilike(pattern) | Route.code.ilike(pattern))
+    if service_area:
+        filters.append(Route.service_area == service_area)
+    if service_type:
+        filters.append(
+            Route.service_types.any(RouteServiceType.service_type == service_type)
+        )
+    if destination:
+        destination_pattern = f"%{destination.strip()}%"
+        last_stop = aliased(RouteStop)
+        last_position = (
+            select(func.max(last_stop.position))
+            .where(last_stop.route_id == Route.id)
+            .scalar_subquery()
+        )
+        filters.append(
+            Route.route_stops.any(
+                (RouteStop.position == last_position)
+                & RouteStop.stop.has(Stop.name.ilike(destination_pattern))
+            )
+        )
+    if status_filter:
+        latest_status = (
+            select(
+                ShuttleStatus.shuttle_id,
+                ShuttleStatus.status,
+                func.row_number()
+                .over(
+                    partition_by=ShuttleStatus.shuttle_id,
+                    order_by=(
+                        ShuttleStatus.created_at.desc(),
+                        ShuttleStatus.id.desc(),
+                    ),
+                )
+                .label("row_number"),
+            )
+            .subquery()
+        )
+        filters.append(
+            Route.shuttles.any(
+                Shuttle.id.in_(
+                    select(latest_status.c.shuttle_id).where(
+                        latest_status.c.row_number == 1,
+                        latest_status.c.status == status_filter,
+                    )
+                )
+            )
+        )
 
     total = db.scalar(select(func.count(Route.id)).where(*filters)) or 0
     routes = list(
@@ -110,22 +171,24 @@ def list_routes(
             .limit(limit)
         )
     )
-    include_inactive_stops = current_user.role == UserRole.ADMIN.value
+    include_inactive_stops = current_user is not None and current_user.role == UserRole.ADMIN.value
     return [
         _route_response(route, include_inactive_stops) for route in routes
     ], total
 
 
-def get_route(db: Session, route_id: UUID, current_user: User) -> RouteRead:
+def get_route(db: Session, route_id: UUID, current_user: User | None) -> RouteRead:
     route = db.scalar(_route_query().where(Route.id == route_id))
+    is_admin = current_user is not None and current_user.role == UserRole.ADMIN.value
     if route is None or (
-        current_user.role == UserRole.STUDENT.value and not route.is_active
+        not is_admin
+        and (not route.is_active or route.verification_status != VerificationStatus.VERIFIED.value)
     ):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Route not found.",
         )
-    return _route_response(route, current_user.role == UserRole.ADMIN.value)
+    return _route_response(route, is_admin)
 
 
 def get_route_for_admin(
@@ -161,9 +224,15 @@ def create_route(db: Session, payload: RouteCreate) -> RouteRead:
         code=payload.code,
         name=payload.name,
         estimated_duration_minutes=payload.estimated_duration_minutes,
+        service_area=payload.service_area.value,
+        verification_status=payload.verification_status.value,
         route_stops=[
             RouteStop(stop=stop, position=position)
             for position, stop in enumerate(stops, start=1)
+        ],
+        service_types=[
+            RouteServiceType(service_type=service_type.value)
+            for service_type in payload.service_types
         ],
     )
     db.add(route)
@@ -181,24 +250,49 @@ def create_route(db: Session, payload: RouteCreate) -> RouteRead:
 def update_route(db: Session, route: Route, payload: RouteUpdate) -> RouteRead:
     updates = payload.model_dump(exclude_unset=True)
     stop_ids = updates.pop("stop_ids", None)
+    service_types = updates.pop("service_types", None)
     if "stop_ids" in payload.model_fields_set and stop_ids is None:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="stop_ids must be a list; use an empty list to remove all stops.",
         )
-    if not updates and stop_ids is None:
+    if not updates and stop_ids is None and service_types is None:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Provide at least one route field to update.",
         )
     if "code" in updates:
         _ensure_unique_code(db, updates["code"], route.id)
+    if "service_area" in updates:
+        updates["service_area"] = updates["service_area"].value
+    if "verification_status" in updates:
+        updates["verification_status"] = updates["verification_status"].value
+    if (
+        updates.get("verification_status") is not None
+        and updates["verification_status"] != "VERIFIED"
+        and "is_active" not in updates
+    ):
+        updates["is_active"] = False
+    if updates.get("is_active") is True and (
+        updates.get("verification_status", route.verification_status)
+        != "VERIFIED"
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Only verified routes can be activated.",
+        )
 
     stops = _load_route_stops(db, stop_ids) if stop_ids is not None else None
     for field, value in updates.items():
         setattr(route, field, value)
     if stops is not None:
         _replace_route_stops(db, route, stops)
+    if service_types is not None:
+        route.service_types.clear()
+        route.service_types.extend(
+            RouteServiceType(service_type=service_type.value)
+            for service_type in service_types
+        )
 
     try:
         db.commit()

@@ -2,6 +2,7 @@ from app.models.announcement import Announcement
 from app.models.feedback import Feedback
 from app.models.route import Route
 from app.models.route_stop import RouteStop
+from app.models.route_service_type import RouteServiceType
 from app.models.shuttle import Shuttle
 from app.models.shuttle_status import ShuttleStatus
 from app.models.stop import Stop
@@ -12,6 +13,7 @@ __all__ = [
     "Feedback",
     "Route",
     "RouteStop",
+    "RouteServiceType",
     "Shuttle",
     "ShuttleStatus",
     "Stop",

@@ -349,3 +349,81 @@ async def test_stops_routes_shuttles_and_student_admin_permissions(
     assert (await client.get(f"{API_PREFIX}/stops/{missing_id}")).status_code == 404
     assert (await client.get(f"{API_PREFIX}/routes/{missing_id}")).status_code == 404
     assert (await client.get(f"{API_PREFIX}/shuttles/{missing_id}")).status_code == 404
+
+
+@pytest.mark.anyio
+async def test_public_unauthenticated_read_only_and_authorization_guards(
+    transport_client: httpx.AsyncClient,
+) -> None:
+    client = transport_client
+    admin_login = await client.post(
+        f"{API_PREFIX}/auth/admin/login",
+        json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD},
+    )
+    assert admin_login.status_code == 200
+    headers = csrf_headers(client)
+
+    verified_stop = await client.post(
+        f"{API_PREFIX}/stops",
+        json={
+            "name": "PUBLIC-VERIFIED-STOP",
+            "service_area": "LPU",
+            "verification_status": "VERIFIED",
+        },
+        headers=headers,
+    )
+    assert verified_stop.status_code == 201
+    verified_stop_id = verified_stop.json()["id"]
+
+    unverified_stop = await client.post(
+        f"{API_PREFIX}/stops",
+        json={
+            "name": "PUBLIC-UNVERIFIED-STOP",
+            "service_area": "LPU",
+            "verification_status": "PENDING_VERIFICATION",
+        },
+        headers=headers,
+    )
+    assert unverified_stop.status_code == 201
+    unverified_stop_id = unverified_stop.json()["id"]
+
+    # Clear all cookies to simulate an unauthenticated public visitor
+    client.cookies.clear()
+
+    # 1. Public can view active verified stops
+    public_stops = await client.get(f"{API_PREFIX}/stops")
+    assert public_stops.status_code == 200
+    stop_ids = [item["id"] for item in public_stops.json()["items"]]
+    assert verified_stop_id in stop_ids
+    assert unverified_stop_id not in stop_ids
+
+    # 2. Public can view specific verified stop, but unverified/inactive returns 404
+    assert (await client.get(f"{API_PREFIX}/stops/{verified_stop_id}")).status_code == 200
+    assert (await client.get(f"{API_PREFIX}/stops/{unverified_stop_id}")).status_code == 404
+
+    # 3. Public can view routes, shuttles, status, announcements without login
+    assert (await client.get(f"{API_PREFIX}/routes")).status_code == 200
+    assert (await client.get(f"{API_PREFIX}/shuttles")).status_code == 200
+    assert (await client.get(f"{API_PREFIX}/shuttle-status")).status_code == 200
+    assert (await client.get(f"{API_PREFIX}/announcements")).status_code == 200
+
+    # 4. Public visitors CANNOT submit feedback or view private feedback (401)
+    assert (
+        await client.post(
+            f"{API_PREFIX}/feedback",
+            json={"category": "DELAY", "message": "unauthenticated attempt"},
+        )
+    ).status_code == 401
+    assert (await client.get(f"{API_PREFIX}/feedback/mine")).status_code == 401
+    assert (await client.get(f"{API_PREFIX}/auth/me")).status_code == 401
+
+    # 5. Public visitors CANNOT perform admin operations (401)
+    assert (await client.post(f"{API_PREFIX}/stops", json={"name": "hacked"})).status_code == 401
+    assert (await client.post(f"{API_PREFIX}/routes", json={"code": "HACK", "name": "hacked"})).status_code == 401
+    assert (await client.post(f"{API_PREFIX}/shuttles", json={"vehicle_code": "HACK"})).status_code == 401
+    assert (
+        await client.post(
+            f"{API_PREFIX}/shuttle-status",
+            json={"shuttle_id": verified_stop_id, "status": "ON_TIME"},
+        )
+    ).status_code == 401

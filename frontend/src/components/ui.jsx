@@ -65,10 +65,18 @@ export function StatCard({ label, value, detail, icon: Icon, tone = "green" }) {
 }
 
 const statusLabels = {
-  ON_TIME: "On time",
+  ON_TIME: "On time / Available",
+  AVAILABLE: "Available",
+  MODERATELY_CROWDED: "Moderately crowded",
+  FULL: "Full",
   DELAYED: "Delayed",
   UNAVAILABLE: "Out of service",
-  NOT_UPDATED: "Not updated",
+  NOT_OPERATING: "Not operating",
+  CANCELLED: "Cancelled",
+  UNKNOWN: "Unknown",
+  NOT_UPDATED: "Status unavailable",
+  STATUS_UNAVAILABLE: "Status unavailable",
+  STALE: "Stale (expired)",
   PENDING: "Pending",
   IN_REVIEW: "In review",
   RESOLVED: "Resolved",
@@ -211,6 +219,20 @@ export function formatDate(value, options = {}) {
     timeStyle: "short",
     ...options,
   }).format(date);
+}
+
+export function formatRelativeTime(value) {
+  if (!value) return "No update";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Unknown";
+  const diffSec = Math.floor((Date.now() - date.getTime()) / 1000);
+  if (diffSec < 60) return "Just now";
+  const diffMin = Math.floor(diffSec / 60);
+  if (diffMin < 60) return `${diffMin}m ago`;
+  const diffHours = Math.floor(diffMin / 60);
+  if (diffHours < 24) return `${diffHours}h ago`;
+  const diffDays = Math.floor(diffHours / 24);
+  return `${diffDays}d ago`;
 }
 
 export function SortControl({ direction, onToggle, label = "Sort by latest" }) {

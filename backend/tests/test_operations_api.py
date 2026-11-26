@@ -134,7 +134,7 @@ async def test_shuttle_status_workflow_and_permissions(
     operations_engine,
 ) -> None:
     client = operations_client
-    assert (await client.get(f"{API_PREFIX}/shuttle-status")).status_code == 401
+    assert (await client.get(f"{API_PREFIX}/shuttle-status")).status_code == 200
     admin_headers = await _login_admin(client)
 
     stop = await client.post(
@@ -265,7 +265,7 @@ async def test_announcement_and_feedback_workflows_and_access(
     operations_engine,
 ) -> None:
     client = operations_client
-    assert (await client.get(f"{API_PREFIX}/announcements")).status_code == 401
+    assert (await client.get(f"{API_PREFIX}/announcements")).status_code == 200
     assert (await client.get(f"{API_PREFIX}/feedback")).status_code == 401
     admin_headers = await _login_admin(client)
 
@@ -540,3 +540,104 @@ async def test_announcement_and_feedback_workflows_and_access(
             )
         ) is None
         assert session.scalar(select(ShuttleStatus.id)) is None
+
+
+@pytest.mark.anyio
+async def test_multi_area_services_verification_and_filters(
+    operations_client: httpx.AsyncClient,
+) -> None:
+    client = operations_client
+    admin_headers = await _login_admin(client)
+
+    stop = await client.post(
+        f"{API_PREFIX}/stops",
+        json={
+            "name": "TEST ONLY Phagwara Station",
+            "service_area": "PHAGWARA",
+            "verification_status": "PENDING_VERIFICATION",
+        },
+        headers=admin_headers,
+    )
+    assert stop.status_code == 201
+    assert stop.json()["is_active"] is False
+    stop_id = stop.json()["id"]
+
+    verified_stop = await client.patch(
+        f"{API_PREFIX}/stops/{stop_id}",
+        json={"verification_status": "VERIFIED", "is_active": True},
+        headers=admin_headers,
+    )
+    assert verified_stop.status_code == 200
+    assert verified_stop.json()["is_active"] is True
+
+    route = await client.post(
+        f"{API_PREFIX}/routes",
+        json={
+            "code": "TEST-PHAGWARA-MULTI",
+            "name": "TEST ONLY Phagwara interchange",
+            "service_area": "PHAGWARA",
+            "service_types": ["CAMPUS_SHUTTLE", "PUBLIC_BUS"],
+            "stop_ids": [stop_id],
+        },
+        headers=admin_headers,
+    )
+    assert route.status_code == 201
+    assert route.json()["service_types"] == ["CAMPUS_SHUTTLE", "PUBLIC_BUS"]
+    route_id = route.json()["id"]
+
+    campus_service = await client.post(
+        f"{API_PREFIX}/shuttles",
+        json={
+            "vehicle_code": "TEST-PHAGWARA-CAMPUS",
+            "capacity": 24,
+            "route_id": route_id,
+            "service_type": "CAMPUS_SHUTTLE",
+        },
+        headers=admin_headers,
+    )
+    public_service = await client.post(
+        f"{API_PREFIX}/shuttles",
+        json={
+            "vehicle_code": "TEST-PHAGWARA-BUS",
+            "capacity": None,
+            "route_id": route_id,
+            "service_type": "PUBLIC_BUS",
+            "is_university_operated": False,
+        },
+        headers=admin_headers,
+    )
+    assert [campus_service.status_code, public_service.status_code] == [201, 201]
+    assert public_service.json()["is_university_operated"] is False
+    public_id = public_service.json()["id"]
+
+    status_update = await client.post(
+        f"{API_PREFIX}/shuttle-status",
+        json={"shuttle_id": public_id, "status": "CANCELLED"},
+        headers=admin_headers,
+    )
+    assert status_update.status_code == 201
+
+    filtered_status = await client.get(
+        f"{API_PREFIX}/shuttle-status",
+        params={
+            "service_area": "PHAGWARA",
+            "service_type": "PUBLIC_BUS",
+            "status": "CANCELLED",
+        },
+    )
+    assert filtered_status.status_code == 200
+    assert filtered_status.json()["total"] == 1
+
+    student_headers = await _login_student(client)
+    filtered_routes = await client.get(
+        f"{API_PREFIX}/routes",
+        params={
+            "service_area": "PHAGWARA",
+            "service_type": "PUBLIC_BUS",
+            "destination": "Station",
+            "status": "CANCELLED",
+        },
+        headers=student_headers,
+    )
+    assert filtered_routes.status_code == 200
+    assert filtered_routes.json()["total"] == 1

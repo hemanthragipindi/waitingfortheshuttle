@@ -5,7 +5,16 @@ from sqlalchemy.orm import Session, configure_mappers
 
 from app.core.enums import ShuttleServiceStatus
 from app.db.base import Base
-from app.models import Feedback, Route, RouteStop, Shuttle, ShuttleStatus, Stop, User
+from app.models import (
+    Feedback,
+    Route,
+    RouteServiceType,
+    RouteStop,
+    Shuttle,
+    ShuttleStatus,
+    Stop,
+    User,
+)
 from app.schemas.announcements import AnnouncementCreate
 from app.schemas.routes import RouteCreate
 from app.schemas.shuttle_status import ShuttleStatusCreate
@@ -33,6 +42,7 @@ def test_all_models_and_relationships_are_registered(test_engine) -> None:
         "stops",
         "routes",
         "route_stops",
+        "route_service_types",
         "shuttles",
         "shuttle_status",
         "announcements",
@@ -48,6 +58,10 @@ def test_all_models_and_relationships_are_registered(test_engine) -> None:
         first_stop = Stop(name="TEST ONLY First Stop")
         second_stop = Stop(name="TEST ONLY Second Stop")
         route = Route(code="TEST-ONLY-1", name="TEST ONLY Route")
+        route.service_types = [
+            RouteServiceType(service_type="CAMPUS_SHUTTLE"),
+            RouteServiceType(service_type="PUBLIC_BUS"),
+        ]
         shuttle = Shuttle(vehicle_code="TEST-ONLY-VEHICLE", capacity=20, route=route)
         route.route_stops = [
             RouteStop(stop=first_stop, position=1),
@@ -78,6 +92,10 @@ def test_all_models_and_relationships_are_registered(test_engine) -> None:
             "TEST ONLY Second Stop",
         ]
         assert loaded_route.shuttles[0].status_updates[0].status == "ON_TIME"
+        assert [item.service_type for item in loaded_route.service_types] == [
+            "CAMPUS_SHUTTLE",
+            "PUBLIC_BUS",
+        ]
 
 
 def test_route_stop_order_and_status_checks_reject_invalid_values(test_engine) -> None:

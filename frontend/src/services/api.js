@@ -2,6 +2,21 @@ import axios from "axios";
 
 const csrfCookieName = import.meta.env.VITE_CSRF_COOKIE_NAME || "p05_csrf_token";
 
+function getApiBaseUrl() {
+  const configuredUrl = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000/api/v1";
+  const apiUrl = new URL(configuredUrl, window.location.origin);
+  const localHosts = new Set(["localhost", "127.0.0.1", "[::1]"]);
+
+  if (
+    localHosts.has(window.location.hostname)
+    && localHosts.has(apiUrl.hostname)
+  ) {
+    apiUrl.hostname = window.location.hostname;
+  }
+
+  return apiUrl.toString().replace(/\/$/, "");
+}
+
 function readCookie(name) {
   const entry = document.cookie
     .split("; ")
@@ -11,7 +26,7 @@ function readCookie(name) {
 }
 
 const api = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000/api/v1",
+  baseURL: getApiBaseUrl(),
   withCredentials: true,
 });
 

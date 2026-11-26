@@ -3,9 +3,10 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.orm import Session
 
-from app.api.dependencies import get_current_admin, get_current_user
+from app.api.dependencies import get_current_admin, get_optional_current_user
 from app.db.session import get_db_session
 from app.models.user import User
+from app.core.enums import ServiceArea, ShuttleServiceStatus, TransportServiceType
 from app.schemas.common import Page
 from app.schemas.routes import (
     RouteCreate,
@@ -34,9 +35,13 @@ router = APIRouter(prefix="/routes", tags=["routes"])
 def read_routes(
     q: str | None = Query(default=None, min_length=1, max_length=120),
     is_active: bool | None = None,
+    service_area: ServiceArea | None = None,
+    service_type: TransportServiceType | None = None,
+    destination: str | None = Query(default=None, min_length=1, max_length=120),
+    status_filter: ShuttleServiceStatus | None = Query(default=None, alias="status"),
     skip: int = Query(default=0, ge=0),
     limit: int = Query(default=50, ge=1, le=100),
-    current_user: User = Depends(get_current_user),
+    current_user: User | None = Depends(get_optional_current_user),
     db: Session = Depends(get_db_session),
 ) -> Page[RouteRead]:
     items, total = list_routes(
@@ -44,6 +49,10 @@ def read_routes(
         current_user,
         query=q,
         is_active=is_active,
+        service_area=service_area.value if service_area else None,
+        service_type=service_type.value if service_type else None,
+        destination=destination,
+        status_filter=status_filter.value if status_filter else None,
         skip=skip,
         limit=limit,
     )
@@ -53,7 +62,7 @@ def read_routes(
 @router.get("/{route_id}", response_model=RouteRead)
 def read_route(
     route_id: UUID,
-    current_user: User = Depends(get_current_user),
+    current_user: User | None = Depends(get_optional_current_user),
     db: Session = Depends(get_db_session),
 ) -> RouteRead:
     return get_route(db, route_id, current_user)

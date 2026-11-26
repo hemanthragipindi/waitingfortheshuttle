@@ -63,8 +63,12 @@ export default function AppLayout() {
 
   const publicNav = !user && (
     <div className="public-nav">
+      <Link to="/student/stops">Campus stops</Link>
+      <Link to="/student/routes">Routes</Link>
+      <Link to="/student/shuttles">Shuttles</Link>
+      <Link to="/student/announcements">Announcements</Link>
       <Link to="/login">Student sign in</Link>
-      <Link to="/admin/login">Administrator</Link>
+      <Link to="/admin/login">Admin</Link>
       <Link className="button button--primary public-nav__cta" to="/register">Create account</Link>
     </div>
   );
@@ -72,9 +76,9 @@ export default function AppLayout() {
   return (
     <div className="app-shell">
       <header className="topbar">
-        <Link className="brand" to="/" aria-label="P05 home">
+        <Link className="brand" to="/" aria-label="Waiting for the Shuttle home">
           <span className="brand__icon"><BusFront size={20} aria-hidden="true" /></span>
-          <span className="brand__name">P05 <span>Shuttle</span></span>
+          <span className="brand__name">Waiting for the Shuttle</span>
         </Link>
         {user ? (
           <>
@@ -142,7 +146,7 @@ export default function AppLayout() {
             {(authError || logoutError) && <div className="global-alert" role="alert">{authError || logoutError}</div>}
             <Outlet />
             <footer className="portal-footer">
-              <span>P05 · Campus shuttle information</span>
+              <span>Waiting for the Shuttle · Campus shuttle information</span>
               <span>Service updates are manually reported. No live tracking is provided.</span>
             </footer>
           </main>
@@ -152,7 +156,7 @@ export default function AppLayout() {
           {logoutError && <div className="global-alert" role="alert">{logoutError}</div>}
           <Outlet />
           <footer className="public-footer">
-            <span>P05 · Waiting for the Shuttle</span>
+            <span>Waiting for the Shuttle · Campus shuttle information</span>
             <span>Campus shuttle information for Lovely Professional University</span>
           </footer>
         </>

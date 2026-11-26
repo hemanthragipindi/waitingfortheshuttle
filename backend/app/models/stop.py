@@ -17,10 +17,17 @@ class Stop(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __table_args__ = (
         UniqueConstraint("name", name="uq_stops_name"),
         Index("ix_stops_is_active", "is_active"),
+        Index("ix_stops_service_area", "service_area"),
     )
 
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    service_area: Mapped[str] = mapped_column(
+        String(20), nullable=False, server_default=text("'LPU'")
+    )
+    verification_status: Mapped[str] = mapped_column(
+        String(24), nullable=False, server_default=text("'VERIFIED'")
+    )
     is_active: Mapped[bool] = mapped_column(
         Boolean,
         nullable=False,

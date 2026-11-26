@@ -3,7 +3,8 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
-from app.api.dependencies import get_current_admin, get_current_user
+from app.api.dependencies import get_current_admin, get_optional_current_user
+from app.core.enums import ServiceArea, TransportServiceType, VerificationStatus
 from app.db.session import get_db_session
 from app.models.shuttle import Shuttle
 from app.models.user import User
@@ -26,9 +27,12 @@ def read_shuttles(
     q: str | None = Query(default=None, min_length=1, max_length=32),
     is_active: bool | None = None,
     route_id: UUID | None = None,
+    service_area: ServiceArea | None = None,
+    service_type: TransportServiceType | None = None,
+    verification_status: VerificationStatus | None = None,
     skip: int = Query(default=0, ge=0),
     limit: int = Query(default=50, ge=1, le=100),
-    current_user: User = Depends(get_current_user),
+    current_user: User | None = Depends(get_optional_current_user),
     db: Session = Depends(get_db_session),
 ) -> Page[ShuttleRead]:
     items, total = list_shuttles(
@@ -37,6 +41,9 @@ def read_shuttles(
         query=q,
         is_active=is_active,
         route_id=route_id,
+        service_area=service_area.value if service_area else None,
+        service_type=service_type.value if service_type else None,
+        verification_status=verification_status.value if verification_status else None,
         skip=skip,
         limit=limit,
     )
@@ -46,7 +53,7 @@ def read_shuttles(
 @router.get("/{shuttle_id}", response_model=ShuttleRead)
 def read_shuttle(
     shuttle_id: UUID,
-    current_user: User = Depends(get_current_user),
+    current_user: User | None = Depends(get_optional_current_user),
     db: Session = Depends(get_db_session),
 ) -> Shuttle:
     return get_shuttle(db, shuttle_id, current_user)

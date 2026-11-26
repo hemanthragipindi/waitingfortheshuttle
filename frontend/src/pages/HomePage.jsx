@@ -22,10 +22,11 @@ export default function HomePage() {
             A clearer campus commute starts with dependable information. Find your stop, browse routes, and check the latest shuttle service updates.
           </p>
           <div className="landing-hero__actions">
-            <Link className="button button--primary button--large" to="/login">
-              Student sign in <ArrowRight size={17} aria-hidden="true" />
+            <Link className="button button--primary button--large" to="/student/stops">
+              Browse campus transit <ArrowRight size={17} aria-hidden="true" />
             </Link>
-            <Link className="landing-text-link" to="/register">Create an account <ArrowUpRight size={16} /></Link>
+            <Link className="button button--secondary button--large" to="/login">Student sign in</Link>
+            <Link className="landing-text-link" to="/register">Create account <ArrowUpRight size={16} /></Link>
           </div>
           <p className="landing-disclaimer"><CircleHelp size={15} /> Updates are manually reported. This service does not provide live GPS or predicted arrival times.</p>
         </div>
@@ -57,9 +58,9 @@ export default function HomePage() {
           <h2>Make your next trip feel simpler.</h2>
         </div>
         <div className="feature-grid">
-          <article className="feature-item"><span><MapPin size={19} /></span><h3>Find your stop</h3><p>Browse campus stops and see which routes serve each location.</p></article>
-          <article className="feature-item"><span><Route size={19} /></span><h3>Explore routes</h3><p>Review route stops in order and plan around available information.</p></article>
-          <article className="feature-item"><span><MessageSquareText size={19} /></span><h3>Share an update</h3><p>Report an issue or suggestion directly to the transport team.</p></article>
+          <Link to="/student/stops" className="feature-item"><span><MapPin size={19} /></span><h3>Find your stop</h3><p>Browse campus stops and see which routes serve each location.</p></Link>
+          <Link to="/student/routes" className="feature-item"><span><Route size={19} /></span><h3>Explore routes</h3><p>Review route stops in order and plan around available information.</p></Link>
+          <Link to="/student/feedback" className="feature-item"><span><MessageSquareText size={19} /></span><h3>Share an update</h3><p>Report an issue or suggestion directly to the transport team.</p></Link>
         </div>
       </section>
     </main>

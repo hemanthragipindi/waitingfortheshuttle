@@ -10,6 +10,7 @@ from app.db.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
 if TYPE_CHECKING:
     from app.models.feedback import Feedback
     from app.models.route_stop import RouteStop
+    from app.models.route_service_type import RouteServiceType
     from app.models.shuttle import Shuttle
 
 
@@ -22,11 +23,18 @@ class Route(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             name="ck_routes_duration_positive",
         ),
         Index("ix_routes_is_active", "is_active"),
+        Index("ix_routes_service_area", "service_area"),
     )
 
     code: Mapped[str] = mapped_column(String(32), nullable=False)
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     estimated_duration_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    service_area: Mapped[str] = mapped_column(
+        String(20), nullable=False, server_default=text("'LPU'")
+    )
+    verification_status: Mapped[str] = mapped_column(
+        String(24), nullable=False, server_default=text("'VERIFIED'")
+    )
     is_active: Mapped[bool] = mapped_column(
         Boolean,
         nullable=False,
@@ -42,3 +50,8 @@ class Route(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     shuttles: Mapped[list[Shuttle]] = relationship(back_populates="route")
     feedback: Mapped[list[Feedback]] = relationship(back_populates="route")
+    service_types: Mapped[list[RouteServiceType]] = relationship(
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="RouteServiceType.service_type",
+    )

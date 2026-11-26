@@ -1,15 +1,24 @@
 import {
+  AlertCircle,
+  AlertTriangle,
   ArrowLeft,
   ArrowRight,
+  Bell,
   BusFront,
   CalendarDays,
   Check,
+  CheckCircle2,
   Clock3,
+  Compass,
+  ExternalLink,
+  Info,
   MapPin,
   MessageSquareText,
   Route as RouteIcon,
   Send,
+  ShieldAlert,
   ShieldCheck,
+  Sparkles,
   UserRound,
 } from "lucide-react";
 import { useMemo, useState } from "react";
@@ -23,6 +32,12 @@ import { shuttleStatusApi } from "../services/shuttleStatus.js";
 import { shuttlesApi } from "../services/shuttles.js";
 import { stopsApi } from "../services/stops.js";
 import {
+  labelFor,
+  serviceAreas,
+  serviceStatuses,
+  serviceTypes,
+} from "../constants/transport.js";
+import {
   Button,
   EmptyState,
   ErrorState,
@@ -33,7 +48,9 @@ import {
   Pagination,
   SearchField,
   StatusBadge,
+  StatCard,
   formatDate,
+  formatRelativeTime,
 } from "../components/ui.jsx";
 
 function usePagedList(load, searchKey = "q") {
@@ -64,6 +81,8 @@ function RouteCard({ route }) {
       <h3>{route.name}</h3>
       <p className="route-card__endpoints">{firstStop || "Stops not listed"} <span>→</span> {lastStop || "—"}</p>
       <div className="route-card__meta">
+        <span>{labelFor(serviceAreas, route.service_area)}</span>
+        <span>{route.service_types?.map((type) => labelFor(serviceTypes, type)).join(", ") || "Service type pending"}</span>
         <span><MapPin size={14} /> {route.route_stops?.length || 0} stops</span>
         <span><Clock3 size={14} /> {route.estimated_duration_minutes ? `${route.estimated_duration_minutes} min estimate` : "Duration not configured"}</span>
       </div>
@@ -78,7 +97,7 @@ function StopCard({ stop }) {
       <span className="stop-card__icon"><MapPin size={19} /></span>
       <div className="stop-card__content">
         <h3>{stop.name}</h3>
-        <p>{stop.description || "Campus shuttle stop"}</p>
+        <p>{labelFor(serviceAreas, stop.service_area)} · {stop.description || "Transport stop"}</p>
         <span className="stop-card__meta">{related === undefined ? "View stop details and routes" : `${related} ${related === 1 ? "route" : "routes"}`}</span>
       </div>
       <ArrowRight size={17} className="stop-card__arrow" />
@@ -88,88 +107,571 @@ function StopCard({ stop }) {
 
 export function Overview() {
   const { user } = useAuth();
-  const routes = useApi(() => routesApi.list({ limit: 4 }), []);
-  const stops = useApi(() => stopsApi.list({ limit: 4 }), []);
-  const statuses = useApi(() => shuttleStatusApi.list({ limit: 4 }), []);
-  const announcements = useApi(() => announcementsApi.list({ limit: 3 }), []);
-  const anyError = routes.error || stops.error || statuses.error || announcements.error;
+  const routesReq = useApi(() => routesApi.list({ limit: 100 }), []);
+  const stopsReq = useApi(() => stopsApi.list({ limit: 100 }), []);
+  const statusesReq = useApi(() => shuttleStatusApi.list({ limit: 100 }), []);
+  const announcementsReq = useApi(() => announcementsApi.list({ limit: 10 }), []);
+
+  const [statusFilter, setStatusFilter] = useState("ALL");
+  const [selectedRouteId, setSelectedRouteId] = useState(null);
+
+  const anyError = routesReq.error || stopsReq.error || statusesReq.error || announcementsReq.error;
+  const anyLoading = routesReq.loading || stopsReq.loading || statusesReq.loading || announcementsReq.loading;
+
+  const routes = useMemo(() => routesReq.data?.items || [], [routesReq.data]);
+  const stops = useMemo(() => stopsReq.data?.items || [], [stopsReq.data]);
+  const statusItems = useMemo(() => statusesReq.data?.items || [], [statusesReq.data]);
+  const announcements = useMemo(() => announcementsReq.data?.items || [], [announcementsReq.data]);
+
+  // Lookup maps
+  const routeMap = useMemo(() => new Map(routes.map((r) => [r.id, r])), [routes]);
+  const stopMap = useMemo(() => new Map(stops.map((s) => [s.id, s])), [stops]);
+
+  // Active route for Route Explorer
+  const activeRouteId = selectedRouteId || routes[0]?.id;
+  const selectedRoute = useMemo(
+    () => routes.find((r) => r.id === activeRouteId) || routes[0] || null,
+    [routes, activeRouteId]
+  );
+
+  // Process shuttle status with real API data and stale check (>2 hours)
+  const processedStatuses = useMemo(() => {
+    return statusItems.map((item) => {
+      const route = routeMap.get(item.shuttle.route_id);
+      let effectiveStatus = item.status;
+      let isStale = false;
+
+      if (!item.last_updated_at || item.status === "NOT_UPDATED") {
+        effectiveStatus = "STATUS_UNAVAILABLE";
+      } else {
+        const ageMs = Date.now() - new Date(item.last_updated_at).getTime();
+        const ageMinutes = Math.floor(ageMs / 60000);
+        if (ageMinutes > 120) {
+          isStale = true;
+          effectiveStatus = "STALE";
+        }
+      }
+
+      const firstStop = route?.route_stops?.[0]?.stop?.name;
+      const lastStop = route?.route_stops?.at(-1)?.stop?.name;
+      const reportedStop = firstStop ? `${firstStop}` : "Campus Corridor";
+
+      return {
+        ...item,
+        effectiveStatus,
+        isStale,
+        route,
+        reportedStop,
+        routeName: route ? `${route.code} · ${route.name}` : "Unassigned / Standby",
+        firstStop,
+        lastStop,
+      };
+    });
+  }, [statusItems, routeMap]);
+
+  // Filter counts
+  const counts = useMemo(() => {
+    return {
+      ALL: processedStatuses.length,
+      AVAILABLE: processedStatuses.filter((s) => s.effectiveStatus === "ON_TIME" || s.effectiveStatus === "AVAILABLE").length,
+      DELAYED: processedStatuses.filter((s) => s.effectiveStatus === "DELAYED").length,
+      UNAVAILABLE: processedStatuses.filter((s) => s.effectiveStatus === "UNAVAILABLE" || s.effectiveStatus === "NOT_OPERATING" || s.effectiveStatus === "CANCELLED").length,
+      STALE: processedStatuses.filter((s) => s.effectiveStatus === "STALE" || s.effectiveStatus === "STATUS_UNAVAILABLE").length,
+    };
+  }, [processedStatuses]);
+
+  // Filtered statuses
+  const filteredStatuses = useMemo(() => {
+    if (statusFilter === "ALL") return processedStatuses;
+    if (statusFilter === "AVAILABLE") return processedStatuses.filter((s) => s.effectiveStatus === "ON_TIME" || s.effectiveStatus === "AVAILABLE");
+    if (statusFilter === "DELAYED") return processedStatuses.filter((s) => s.effectiveStatus === "DELAYED");
+    if (statusFilter === "UNAVAILABLE") return processedStatuses.filter((s) => s.effectiveStatus === "UNAVAILABLE" || s.effectiveStatus === "NOT_OPERATING" || s.effectiveStatus === "CANCELLED");
+    if (statusFilter === "STALE") return processedStatuses.filter((s) => s.effectiveStatus === "STALE" || s.effectiveStatus === "STATUS_UNAVAILABLE");
+    return processedStatuses;
+  }, [processedStatuses, statusFilter]);
+
+  // Active verified shuttles count
+  const activeShuttlesCount = useMemo(() => {
+    return statusItems.filter((item) => item.shuttle?.is_active).length;
+  }, [statusItems]);
+
+  // Urgent notice if any
+  const urgentNotice = useMemo(() => {
+    return announcements.find((a) => {
+      const text = `${a.title} ${a.body}`.toLowerCase();
+      return text.includes("delay") || text.includes("service") || text.includes("interruption") || text.includes("divert") || text.includes("urgent");
+    }) || null;
+  }, [announcements]);
+
+  // Shuttles assigned to the currently selected route
+  const selectedRouteShuttles = useMemo(() => {
+    if (!selectedRoute) return [];
+    return processedStatuses.filter((s) => s.shuttle.route_id === selectedRoute.id);
+  }, [selectedRoute, processedStatuses]);
+
+  // Announcements relevant to selected route
+  const selectedRouteAnnouncements = useMemo(() => {
+    if (!selectedRoute) return [];
+    const code = selectedRoute.code.toLowerCase();
+    const name = selectedRoute.name.toLowerCase();
+    return announcements.filter((a) => {
+      const text = `${a.title} ${a.body}`.toLowerCase();
+      return text.includes(code) || text.includes(name);
+    });
+  }, [selectedRoute, announcements]);
+
+  const refreshAll = () => {
+    routesReq.refresh();
+    stopsReq.refresh();
+    statusesReq.refresh();
+    announcementsReq.refresh();
+  };
 
   return (
     <div className="page-content">
-      <PageHeader
-        eyebrow="STUDENT DASHBOARD"
-        title={`Good day, ${user?.full_name?.split(" ")[0] || "there"}`}
-        description="Here’s the latest campus shuttle information to help you plan your next trip."
-        action={<Link className="button button--primary" to="/student/feedback"><MessageSquareText size={16} /> Send feedback</Link>}
-      />
-      {anyError && <ErrorState message={anyError} onRetry={() => [routes.refresh(), stops.refresh(), statuses.refresh(), announcements.refresh()]} />}
-      <div className="student-dashboard-grid">
-        <section className="dashboard-main-column">
-          <Panel title="Current service status" subtitle="Latest manually reported shuttle updates" action={<Link className="panel-link" to="/student/shuttles">View all <ArrowRight size={14} /></Link>}>
-            {statuses.loading ? <Loading /> : statuses.data?.items?.length ? (
-              <div className="status-list">
-                {statuses.data.items.map((item) => (
-                  <Link key={item.shuttle.id} to={`/student/shuttles/${item.shuttle.id}`} className="status-row">
-                    <span className="status-row__icon"><BusFront size={17} /></span>
-                    <span className="status-row__name"><strong>{item.shuttle.vehicle_code}</strong><small>{item.shuttle.is_active ? "Service vehicle" : "Inactive vehicle"}</small></span>
-                    <span className="status-row__updated"><StatusBadge status={item.status} /><small>{item.last_updated_at ? `Updated ${formatDate(item.last_updated_at)}` : "No updates recorded"}</small></span>
-                  </Link>
-                ))}
-              </div>
-            ) : <EmptyState title="No shuttle updates yet" description="Service status will appear here when the transport team records an update." />}
-          </Panel>
-          <Panel title="Available routes" subtitle="Explore stops and route information" action={<Link className="panel-link" to="/student/routes">All routes <ArrowRight size={14} /></Link>}>
-            {routes.loading ? <Loading /> : routes.data?.items?.length ? (
-              <div className="route-card-grid">{routes.data.items.map((route) => <RouteCard key={route.id} route={route} />)}</div>
-            ) : <EmptyState title="Routes will appear here" description="There are no active routes available yet." />}
-          </Panel>
-        </section>
-        <aside className="dashboard-side-column">
-          <Panel title="Campus stops" subtitle="Find your nearest shuttle stop" action={<Link className="panel-link" to="/student/stops">Browse <ArrowRight size={14} /></Link>}>
-            {stops.loading ? <Loading /> : stops.data?.items?.length ? (
-              <div className="compact-list">
-                {stops.data.items.map((stop) => (
-                  <Link key={stop.id} className="compact-item" to={`/student/stops/${stop.id}`}>
-                    <span className="compact-item__icon"><MapPin size={15} /></span>
-                    <span><strong>{stop.name}</strong><small>{stop.description || "Campus stop"}</small></span>
-                    <ArrowRight size={15} />
-                  </Link>
-                ))}
-              </div>
-            ) : <EmptyState title="No stops listed" description="Configured campus stops will appear here." />}
-          </Panel>
-          <Panel title="Latest announcements" subtitle="Updates from the transport team" action={<Link className="panel-link" to="/student/announcements">All updates <ArrowRight size={14} /></Link>}>
-            {announcements.loading ? <Loading /> : announcements.data?.items?.length ? (
-              <div className="announcement-mini-list">
-                {announcements.data.items.map((item) => (
-                  <article key={item.id} className="announcement-mini">
-                    <span className="announcement-mini__date">{formatDate(item.starts_at || item.created_at, { timeStyle: undefined })}</span>
-                    <h3>{item.title}</h3>
-                    <p>{item.body}</p>
-                  </article>
-                ))}
-              </div>
-            ) : <EmptyState title="No announcements" description="Published service updates will appear here." />}
-          </Panel>
-          <div className="info-callout">
-            <span><ShieldCheck size={17} /></span>
-            <p><strong>Information you can trust</strong>Service updates are manually reported by administrators, not live tracking.</p>
+      {/* Top Hero Heading */}
+      <div className="dashboard-hero-header">
+        <div>
+          <span className="dashboard-kicker-badge">
+            <Compass size={13} /> LOVELY PROFESSIONAL UNIVERSITY · CAMPUS & REGIONAL TRANSPORT
+          </span>
+          <h1>Good day, {user?.full_name?.split(" ")[0] || "Student"}</h1>
+          <p className="page-heading__description">
+            Verified university shuttle coordination across LPU Campus, Phagwara, and Jalandhar corridors.
+          </p>
+        </div>
+        <div className="page-heading__action">
+          <Button variant="secondary" onClick={refreshAll} icon={Clock3} disabled={anyLoading}>
+            {anyLoading ? "Refreshing…" : "Refresh status"}
+          </Button>
+        </div>
+      </div>
+
+      {anyError && (
+        <ErrorState message={anyError} onRetry={refreshAll} />
+      )}
+
+      {/* Urgent Service Alert Banner (if any) */}
+      {urgentNotice && (
+        <div className="dashboard-alert-banner" role="alert">
+          <div className="dashboard-alert-banner__content">
+            <span className="dashboard-alert-banner__icon">
+              <AlertTriangle size={18} />
+            </span>
+            <div>
+              <h4>Service Notice: {urgentNotice.title}</h4>
+              <p>{urgentNotice.body}</p>
+            </div>
           </div>
-        </aside>
+          <Link to="/student/announcements" className="button button--secondary" style={{ flexShrink: 0 }}>
+            Read bulletins
+          </Link>
+        </div>
+      )}
+
+      {/* Section A: Transport Overview */}
+      <div className="dashboard-section">
+        <div className="stat-grid">
+          <StatCard
+            label="Available Routes"
+            value={routesReq.loading ? "…" : (routesReq.data?.total ?? routes.length)}
+            detail="Verified transit corridors"
+            icon={RouteIcon}
+            tone="blue"
+          />
+          <StatCard
+            label="Registered Stops"
+            value={stopsReq.loading ? "…" : (stopsReq.data?.total ?? stops.length)}
+            detail="Boarding & arrival points"
+            icon={MapPin}
+            tone="green"
+          />
+          <StatCard
+            label="Active Shuttles"
+            value={statusesReq.loading ? "…" : activeShuttlesCount}
+            detail="Vehicles in operation"
+            icon={BusFront}
+            tone="amber"
+          />
+          <StatCard
+            label="Service Notices"
+            value={announcementsReq.loading ? "…" : (announcementsReq.data?.total ?? announcements.length)}
+            detail="Official announcements"
+            icon={Bell}
+            tone="red"
+          />
+        </div>
+      </div>
+
+      {/* Section B: Shuttle Status Cards */}
+      <section className="dashboard-section">
+        <div className="section-head-bar">
+          <div>
+            <h2>Live Shuttle Coordination Status</h2>
+            <p>Verified status records maintained by university transport administration.</p>
+          </div>
+          <div className="filter-pill-group">
+            <button
+              type="button"
+              className={`filter-pill ${statusFilter === "ALL" ? "is-active" : ""}`}
+              onClick={() => setStatusFilter("ALL")}
+            >
+              All Shuttles <span className="filter-pill__count">{counts.ALL}</span>
+            </button>
+            <button
+              type="button"
+              className={`filter-pill ${statusFilter === "AVAILABLE" ? "is-active" : ""}`}
+              onClick={() => setStatusFilter("AVAILABLE")}
+            >
+              On Time / Available <span className="filter-pill__count">{counts.AVAILABLE}</span>
+            </button>
+            <button
+              type="button"
+              className={`filter-pill ${statusFilter === "DELAYED" ? "is-active" : ""}`}
+              onClick={() => setStatusFilter("DELAYED")}
+            >
+              Delayed <span className="filter-pill__count">{counts.DELAYED}</span>
+            </button>
+            <button
+              type="button"
+              className={`filter-pill ${statusFilter === "UNAVAILABLE" ? "is-active" : ""}`}
+              onClick={() => setStatusFilter("UNAVAILABLE")}
+            >
+              Out of Service <span className="filter-pill__count">{counts.UNAVAILABLE}</span>
+            </button>
+            <button
+              type="button"
+              className={`filter-pill ${statusFilter === "STALE" ? "is-active" : ""}`}
+              onClick={() => setStatusFilter("STALE")}
+            >
+              Stale / Unavailable <span className="filter-pill__count">{counts.STALE}</span>
+            </button>
+          </div>
+        </div>
+
+        {statusesReq.loading ? (
+          <Loading label="Loading shuttle service status" />
+        ) : filteredStatuses.length ? (
+          <div className="student-status-grid">
+            {filteredStatuses.map((item) => (
+              <Link
+                key={item.shuttle.id}
+                to={`/student/shuttles/${item.shuttle.id}`}
+                className="student-status-card"
+              >
+                <div className="student-status-card__header">
+                  <div className="student-status-card__vehicle">
+                    <span className="student-status-card__icon">
+                      <BusFront size={18} />
+                    </span>
+                    <div>
+                      <span className="student-status-card__vehicle-code">
+                        {item.shuttle.vehicle_code}
+                      </span>
+                      <span className="student-status-card__operator">
+                        {item.shuttle.is_university_operated
+                          ? "University Operated"
+                          : "External Public Transit"}
+                        {item.shuttle.capacity ? ` · ${item.shuttle.capacity} seats` : ""}
+                      </span>
+                    </div>
+                  </div>
+                  <StatusBadge status={item.effectiveStatus} />
+                </div>
+
+                <div className="student-status-card__body">
+                  <div className="status-card-row">
+                    <RouteIcon size={14} />
+                    <span>
+                      Route: <strong>{item.routeName}</strong>
+                    </span>
+                  </div>
+
+                  <div className="status-card-row">
+                    <MapPin size={14} />
+                    <span>
+                      Reported Stop: <strong>{item.reportedStop}</strong>
+                    </span>
+                  </div>
+
+                  {item.message && (
+                    <div className="status-card-message">
+                      “{item.message}”
+                    </div>
+                  )}
+                </div>
+
+                <div className="student-status-card__footer">
+                  <span className="admin-reported-pill">
+                    <ShieldCheck size={12} /> Admin Reported
+                  </span>
+                  <span
+                    className="status-timestamp"
+                    title={item.last_updated_at ? formatDate(item.last_updated_at) : "No timestamp recorded"}
+                  >
+                    <Clock3 size={11} /> {formatRelativeTime(item.last_updated_at)}
+                  </span>
+                </div>
+              </Link>
+            ))}
+          </div>
+        ) : (
+          <EmptyState
+            title="No shuttles match this filter"
+            description="Select another status filter or check back once the transport administration posts an update."
+          />
+        )}
+      </section>
+
+      {/* Section C: Route Explorer */}
+      <section className="dashboard-section">
+        <div className="section-head-bar">
+          <div>
+            <h2>Campus & Regional Route Explorer</h2>
+            <p>Select an active route to inspect ordered stop sequences, terminal points, and assigned shuttles.</p>
+          </div>
+          <Link to="/student/routes" className="panel-link">
+            All routes directory <ArrowRight size={14} />
+          </Link>
+        </div>
+
+        {routesReq.loading ? (
+          <Loading label="Loading transport routes" />
+        ) : routes.length ? (
+          <div className="route-explorer-box">
+            {/* Horizontal Route Tabs */}
+            <div className="route-explorer-tabs">
+              {routes.map((route) => (
+                <button
+                  type="button"
+                  key={route.id}
+                  className={`route-explorer-tab ${route.id === activeRouteId ? "is-active" : ""}`}
+                  onClick={() => setSelectedRouteId(route.id)}
+                >
+                  <span className="route-code">{route.code}</span>
+                  <span>{route.name}</span>
+                </button>
+              ))}
+            </div>
+
+            {selectedRoute && (
+              <div className="route-explorer-detail">
+                {/* Main Stop Timeline */}
+                <div className="route-explorer-detail__main">
+                  <div className="route-header-block">
+                    <div>
+                      <span className="eyebrow">ROUTE {selectedRoute.code} · {labelFor(serviceAreas, selectedRoute.service_area)}</span>
+                      <h3>{selectedRoute.name}</h3>
+                      <p>
+                        {selectedRoute.service_types?.map((t) => labelFor(serviceTypes, t)).join(", ")}
+                        {selectedRoute.estimated_duration_minutes ? ` · ~${selectedRoute.estimated_duration_minutes} min journey` : ""}
+                      </p>
+                    </div>
+                    <Link
+                      to={`/student/routes/${selectedRoute.id}`}
+                      className="button button--secondary"
+                      style={{ fontSize: "10px", padding: "0 10px", minHeight: "32px" }}
+                    >
+                      Route details <ArrowRight size={13} />
+                    </Link>
+                  </div>
+
+                  {/* Terminal Origin -> Terminus Banner */}
+                  <div className="route-terminal-banner">
+                    <span>Origin: <strong>{selectedRoute.route_stops?.[0]?.stop?.name || "Starting Point"}</strong></span>
+                    <span className="route-terminal-arrow">➔</span>
+                    <span>Terminus: <strong>{selectedRoute.route_stops?.at(-1)?.stop?.name || "End Terminal"}</strong></span>
+                  </div>
+
+                  {/* Visual Stop Sequence Timeline */}
+                  {selectedRoute.route_stops?.length ? (
+                    <div className="route-timeline-horizontal">
+                      {selectedRoute.route_stops.map((stopRow, index) => {
+                        const isStart = index === 0;
+                        const isEnd = index === selectedRoute.route_stops.length - 1;
+                        return (
+                          <div
+                            key={stopRow.stop_id}
+                            className={`route-timeline-stop ${isStart ? "is-start" : ""} ${isEnd ? "is-end" : ""}`}
+                          >
+                            <span className="route-timeline-stop__num">
+                              {index + 1}
+                            </span>
+                            <div className="route-timeline-stop__content">
+                              <div>
+                                <Link to={`/student/stops/${stopRow.stop_id}`}>
+                                  <strong>{stopRow.stop.name}</strong>
+                                </Link>
+                                {isStart && <span className="stop-badge-pill stop-badge-pill--start">Starting Terminal</span>}
+                                {isEnd && selectedRoute.route_stops.length > 1 && <span className="stop-badge-pill stop-badge-pill--end">Final Stop</span>}
+                              </div>
+                              <small>{labelFor(serviceAreas, stopRow.stop.service_area)} · Boarding point</small>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <EmptyState
+                      title="No stops configured"
+                      description="Stops for this route will appear here once registered by the transport desk."
+                    />
+                  )}
+                </div>
+
+                {/* Right Side: Assigned Shuttles & Route Notices */}
+                <div className="route-explorer-detail__side">
+                  <div>
+                    <h4 className="side-subpanel-title">
+                      Assigned Shuttles ({selectedRouteShuttles.length})
+                    </h4>
+                    {selectedRouteShuttles.length ? (
+                      <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                        {selectedRouteShuttles.map((s) => (
+                          <Link
+                            key={s.shuttle.id}
+                            to={`/student/shuttles/${s.shuttle.id}`}
+                            className="assigned-shuttle-chip"
+                          >
+                            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                              <BusFront size={15} style={{ color: "var(--green-800)" }} />
+                              <div>
+                                <strong>{s.shuttle.vehicle_code}</strong>
+                                <small style={{ display: "block", color: "#8a968e", fontSize: "8px" }}>
+                                  {s.reportedStop}
+                                </small>
+                              </div>
+                            </div>
+                            <StatusBadge status={s.effectiveStatus} />
+                          </Link>
+                        ))}
+                      </div>
+                    ) : (
+                      <p style={{ margin: 0, fontSize: "10px", color: "#8a968e" }}>
+                        No shuttles currently assigned to this route.
+                      </p>
+                    )}
+                  </div>
+
+                  <div>
+                    <h4 className="side-subpanel-title">Route Notices</h4>
+                    {selectedRouteAnnouncements.length ? (
+                      <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                        {selectedRouteAnnouncements.map((a) => (
+                          <div key={a.id} style={{ fontSize: "10px", padding: "8px", background: "#fff", border: "1px solid #e7ebe8", borderRadius: "6px" }}>
+                            <strong style={{ color: "#324337" }}>{a.title}</strong>
+                            <p style={{ margin: "3px 0 0", color: "#77857c", fontSize: "9px" }}>{a.body}</p>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p style={{ margin: 0, fontSize: "10px", color: "#8a968e" }}>
+                        No specific delays or route notices recorded for this route.
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        ) : (
+          <EmptyState
+            title="No active routes found"
+            description="Active campus transit routes will appear here."
+          />
+        )}
+      </section>
+
+      {/* Section D: Latest Announcements */}
+      <section className="dashboard-section">
+        <div className="section-head-bar">
+          <div>
+            <h2>Service Announcements & Bulletins</h2>
+            <p>Official transport notices regarding route deviations, schedules, and operations.</p>
+          </div>
+          <Link to="/student/announcements" className="panel-link">
+            All announcements <ArrowRight size={14} />
+          </Link>
+        </div>
+
+        {announcementsReq.loading ? (
+          <Loading label="Loading transport bulletins" />
+        ) : announcements.length ? (
+          <div className="announcement-list">
+            {announcements.slice(0, 4).map((item) => (
+              <article key={item.id} className="announcement-card">
+                <div className="announcement-card__date">
+                  <CalendarDays size={14} />
+                  <span>{formatDate(item.starts_at || item.created_at)}</span>
+                  <span style={{ marginLeft: "auto", fontSize: "8px", fontWeight: "700", color: "var(--green-900)" }}>
+                    OFFICIAL NOTICE
+                  </span>
+                </div>
+                <h2>{item.title}</h2>
+                <p>{item.body}</p>
+                {item.ends_at && (
+                  <span className="announcement-card__until">
+                    Effective until {formatDate(item.ends_at)}
+                  </span>
+                )}
+              </article>
+            ))}
+          </div>
+        ) : (
+          <EmptyState
+            title="No announcements published"
+            description="Service updates will appear here when posted by the transport team."
+          />
+        )}
+      </section>
+
+      {/* Section E: Secondary Student Feedback Banner */}
+      <div className="secondary-feedback-box">
+        <div className="secondary-feedback-box__content">
+          <span className="secondary-feedback-box__icon">
+            <MessageSquareText size={20} />
+          </span>
+          <div>
+            <h4>Notice an unlisted delay or have transit feedback?</h4>
+            <p>
+              Your reports help transport coordinators correct stop listings and identify service issues.
+            </p>
+          </div>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: "8px", flexShrink: 0 }}>
+          <Link to="/student/my-feedback" className="button button--secondary">
+            My Submissions
+          </Link>
+          <Link to="/student/feedback" className="button button--primary">
+            Send Feedback
+          </Link>
+        </div>
+      </div>
+
+      {/* Information Integrity Disclaimer */}
+      <div className="disclosure-note" style={{ marginTop: "22px" }}>
+        <ShieldCheck size={16} />
+        <span>
+          <strong>Information Integrity:</strong> All shuttle updates are manually recorded by university administrators. The platform does not display automated GPS tracking, algorithmically estimated arrival countdowns, or synthetic crowd percentages.
+        </span>
       </div>
     </div>
   );
 }
 
 export function Stops() {
-  const loadStops = useMemo(() => (params) => stopsApi.list(params), []);
+  const [area, setArea] = useState("");
+  const loadStops = useMemo(() => (params) => stopsApi.list({
+    ...params,
+    ...(area ? { service_area: area } : {}),
+  }), [area]);
   const { data, loading, error, refresh, query, setQuery, page, setPage } = usePagedList(loadStops);
   const items = data?.items ?? [];
   const total = data?.total ?? 0;
   return (
     <div className="page-content">
       <PageHeader eyebrow="EXPLORE CAMPUS" title="Campus stops" description="Find shuttle stops across campus and see where each one can take you." />
-      <div className="toolbar"><SearchField value={query} onChange={setQuery} placeholder="Search stops" /></div>
+      <div className="toolbar"><SearchField value={query} onChange={setQuery} placeholder="Search stops" /><select aria-label="Filter by service area" value={area} onChange={(event) => { setArea(event.target.value); setPage(1); }}><option value="">All service areas</option>{serviceAreas.map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></div>
       <ResourceState loading={loading} error={error} refresh={refresh} hasItems={data?.items?.length} empty={<EmptyState title="No stops found" description={query ? "Try a different search term." : "Active campus stops will appear here when they're added."} />}>
         <div className="stop-card-grid">{items.map((stop) => <StopCard key={stop.id} stop={stop} />)}</div>
         <Pagination page={page} limit={50} total={total} onPageChange={setPage} />
@@ -212,14 +714,24 @@ export function StopDetails() {
 }
 
 export function Routes() {
-  const loadRoutes = useMemo(() => (params) => routesApi.list(params), []);
+  const [area, setArea] = useState("");
+  const [destination, setDestination] = useState("");
+  const [serviceType, setServiceType] = useState("");
+  const [status, setStatus] = useState("");
+  const loadRoutes = useMemo(() => (params) => routesApi.list({
+    ...params,
+    ...(area ? { service_area: area } : {}),
+    ...(destination.trim() ? { destination: destination.trim() } : {}),
+    ...(serviceType ? { service_type: serviceType } : {}),
+    ...(status ? { status } : {}),
+  }), [area, destination, serviceType, status]);
   const { data, loading, error, refresh, query, setQuery, page, setPage } = usePagedList(loadRoutes);
   const items = data?.items ?? [];
   const total = data?.total ?? 0;
   return (
     <div className="page-content">
       <PageHeader eyebrow="PLAN YOUR JOURNEY" title="Shuttle routes" description="Review active routes, their ordered stops, and estimated journey durations when configured." />
-      <div className="toolbar"><SearchField value={query} onChange={setQuery} placeholder="Search by route name or code" /></div>
+      <div className="toolbar"><SearchField value={query} onChange={(value) => { setQuery(value); setPage(1); }} placeholder="Search by route name or code" /><input value={destination} onChange={(event) => { setDestination(event.target.value); setPage(1); }} placeholder="Destination" aria-label="Filter by destination" /><select aria-label="Filter by service area" value={area} onChange={(event) => { setArea(event.target.value); setPage(1); }}><option value="">All areas</option>{serviceAreas.map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select><select aria-label="Filter by route type" value={serviceType} onChange={(event) => { setServiceType(event.target.value); setPage(1); }}><option value="">All service types</option>{serviceTypes.map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select><select aria-label="Filter by current status" value={status} onChange={(event) => { setStatus(event.target.value); setPage(1); }}><option value="">All current statuses</option>{serviceStatuses.map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></div>
       <ResourceState loading={loading} error={error} refresh={refresh} hasItems={data?.items?.length} empty={<EmptyState title="No routes found" description={query ? "Try another route name or code." : "Active shuttle routes will appear here when configured."} />}>
         <div className="route-card-grid route-card-grid--wide">{items.map((route) => <RouteCard key={route.id} route={route} />)}</div>
         <Pagination page={page} limit={50} total={total} onPageChange={setPage} />
@@ -260,21 +772,24 @@ export function RouteDetails() {
 
 export function Shuttles() {
   const [search, setSearch] = useState("");
-  const items = useApi(() => shuttleStatusApi.list({ limit: 100 }), []);
+  const [area, setArea] = useState("");
+  const [serviceType, setServiceType] = useState("");
+  const [status, setStatus] = useState("");
+  const items = useApi(() => shuttleStatusApi.list({ limit: 100, ...(area ? { service_area: area } : {}), ...(serviceType ? { service_type: serviceType } : {}), ...(status ? { status } : {}) }), [area, serviceType, status]);
   const filtered = items.data?.items?.filter((item) =>
     item.shuttle.vehicle_code.toLowerCase().includes(search.toLowerCase())
   ) || [];
   return (
     <div className="page-content">
       <PageHeader eyebrow="CAMPUS TRANSPORT" title="Shuttle information" description="View active shuttle vehicles and the latest service information recorded by the transport team." />
-      <div className="toolbar"><SearchField value={search} onChange={setSearch} placeholder="Search vehicle code" /></div>
+      <div className="toolbar"><SearchField value={search} onChange={setSearch} placeholder="Search vehicle or service code" /><select aria-label="Filter by service area" value={area} onChange={(event) => setArea(event.target.value)}><option value="">All areas</option>{serviceAreas.map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select><select aria-label="Filter by service type" value={serviceType} onChange={(event) => setServiceType(event.target.value)}><option value="">All service types</option>{serviceTypes.map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select><select aria-label="Filter by current status" value={status} onChange={(event) => setStatus(event.target.value)}><option value="">All current statuses</option>{serviceStatuses.map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></div>
       {items.loading ? <Loading /> : items.error ? <ErrorState message={items.error} onRetry={items.refresh} /> : filtered.length ? (
         <div className="shuttle-grid">{filtered.map(({ shuttle, status: serviceStatus, message, last_updated_at: updated }) => (
           <Link className="shuttle-card" to={`/student/shuttles/${shuttle.id}`} key={shuttle.id}>
             <div className="shuttle-card__header"><span className="shuttle-card__icon"><BusFront size={20} /></span><StatusBadge status={serviceStatus} /></div>
-            <p className="eyebrow">{shuttle.is_active ? "ACTIVE VEHICLE" : "INACTIVE VEHICLE"}</p>
+            <p className="eyebrow">{shuttle.is_university_operated ? "UNIVERSITY-OPERATED" : "EXTERNAL PUBLIC TRANSPORT"}</p>
             <h3>{shuttle.vehicle_code}</h3>
-            <p>{shuttle.route_id ? "Assigned to a campus route" : "No route assigned"}</p>
+            <p>{labelFor(serviceTypes, shuttle.service_type)} · {shuttle.route_id ? "Assigned to a route" : "No route assigned"}</p>
             <div className="shuttle-card__foot"><span>{message || (updated ? "No administrator message" : "No updates recorded")}</span><small>{updated ? formatDate(updated) : "Not updated"}</small></div>
           </Link>
         ))}</div>

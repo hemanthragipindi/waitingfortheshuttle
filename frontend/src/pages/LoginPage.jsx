@@ -73,7 +73,7 @@ export default function LoginPage({ isAdmin = false }) {
         </form>
         {!isAdmin && (
           <p className="auth-card__footer">
-            New to P05? <Link to="/register">Create a student account</Link>
+            New to the shuttle portal? <Link to="/register">Create a student account</Link>
           </p>
         )}
       </section>

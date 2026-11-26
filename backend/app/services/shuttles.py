@@ -5,7 +5,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.core.enums import UserRole
+from app.core.enums import UserRole, VerificationStatus
 from app.models.route import Route
 from app.models.shuttle import Shuttle
 from app.models.user import User
@@ -18,22 +18,36 @@ class DuplicateVehicleCode(Exception):
 
 def list_shuttles(
     db: Session,
-    current_user: User,
+    current_user: User | None,
     *,
     query: str | None,
     is_active: bool | None,
     route_id: UUID | None,
+    service_area: str | None,
+    service_type: str | None,
+    verification_status: str | None,
     skip: int,
     limit: int,
 ) -> tuple[list[Shuttle], int]:
     filters = []
-    active_filter = True if current_user.role == UserRole.STUDENT.value else is_active
+    is_admin = current_user is not None and current_user.role == UserRole.ADMIN.value
+    active_filter = is_active if is_admin else True
     if active_filter is not None:
         filters.append(Shuttle.is_active.is_(active_filter))
+    if not is_admin:
+        filters.append(Shuttle.verification_status == VerificationStatus.VERIFIED.value)
+    elif verification_status:
+        filters.append(Shuttle.verification_status == verification_status)
     if query and query.strip():
         filters.append(Shuttle.vehicle_code.ilike(f"%{query.strip()}%"))
     if route_id is not None:
         filters.append(Shuttle.route_id == route_id)
+    if service_area:
+        filters.append(
+            Shuttle.route.has(Route.service_area == service_area)
+        )
+    if service_type:
+        filters.append(Shuttle.service_type == service_type)
 
     total = db.scalar(select(func.count(Shuttle.id)).where(*filters)) or 0
     items = list(
@@ -48,10 +62,12 @@ def list_shuttles(
     return items, total
 
 
-def get_shuttle(db: Session, shuttle_id: UUID, current_user: User) -> Shuttle:
+def get_shuttle(db: Session, shuttle_id: UUID, current_user: User | None) -> Shuttle:
     shuttle = db.get(Shuttle, shuttle_id)
+    is_admin = current_user is not None and current_user.role == UserRole.ADMIN.value
     if shuttle is None or (
-        current_user.role == UserRole.STUDENT.value and not shuttle.is_active
+        not is_admin
+        and (not shuttle.is_active or shuttle.verification_status != VerificationStatus.VERIFIED.value)
     ):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -95,6 +111,10 @@ def create_shuttle(db: Session, payload: ShuttleCreate) -> Shuttle:
         vehicle_code=payload.vehicle_code,
         capacity=payload.capacity,
         route_id=payload.route_id,
+        service_type=payload.service_type.value,
+        is_university_operated=payload.is_university_operated,
+        verification_status=payload.verification_status.value,
+        is_active=payload.verification_status.value == "VERIFIED",
     )
     db.add(shuttle)
     try:
@@ -129,6 +149,24 @@ def update_shuttle(db: Session, shuttle: Shuttle, payload: ShuttleUpdate) -> Shu
             raise DuplicateVehicleCode
     if "route_id" in updates:
         _validate_route_assignment(db, updates["route_id"])
+    if "service_type" in updates:
+        updates["service_type"] = updates["service_type"].value
+    if "verification_status" in updates:
+        updates["verification_status"] = updates["verification_status"].value
+    if (
+        updates.get("verification_status") is not None
+        and updates["verification_status"] != "VERIFIED"
+        and "is_active" not in updates
+    ):
+        updates["is_active"] = False
+    if updates.get("is_active") is True and (
+        updates.get("verification_status", shuttle.verification_status)
+        != "VERIFIED"
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Only verified services can be activated.",
+        )
 
     for field, value in updates.items():
         setattr(shuttle, field, value)

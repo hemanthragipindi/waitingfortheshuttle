@@ -5,7 +5,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.core.enums import UserRole
+from app.core.enums import UserRole, VerificationStatus
 from app.models.stop import Stop
 from app.models.user import User
 from app.schemas.stops import StopCreate, StopUpdate
@@ -17,19 +17,28 @@ class DuplicateStopName(Exception):
 
 def list_stops(
     db: Session,
-    current_user: User,
+    current_user: User | None,
     *,
     query: str | None,
     is_active: bool | None,
+    service_area: str | None,
+    verification_status: str | None,
     skip: int,
     limit: int,
 ) -> tuple[list[Stop], int]:
     filters = []
-    active_filter = True if current_user.role == UserRole.STUDENT.value else is_active
+    is_admin = current_user is not None and current_user.role == UserRole.ADMIN.value
+    active_filter = is_active if is_admin else True
     if active_filter is not None:
         filters.append(Stop.is_active.is_(active_filter))
+    if not is_admin:
+        filters.append(Stop.verification_status == VerificationStatus.VERIFIED.value)
+    elif verification_status:
+        filters.append(Stop.verification_status == verification_status)
     if query:
         filters.append(Stop.name.ilike(f"%{query.strip()}%"))
+    if service_area:
+        filters.append(Stop.service_area == service_area)
 
     total = db.scalar(select(func.count(Stop.id)).where(*filters)) or 0
     items = list(
@@ -44,10 +53,12 @@ def list_stops(
     return items, total
 
 
-def get_stop(db: Session, stop_id: UUID, current_user: User) -> Stop:
+def get_stop(db: Session, stop_id: UUID, current_user: User | None) -> Stop:
     stop = db.get(Stop, stop_id)
+    is_admin = current_user is not None and current_user.role == UserRole.ADMIN.value
     if stop is None or (
-        current_user.role == UserRole.STUDENT.value and not stop.is_active
+        not is_admin
+        and (not stop.is_active or stop.verification_status != VerificationStatus.VERIFIED.value)
     ):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -71,7 +82,13 @@ def create_stop(db: Session, payload: StopCreate) -> Stop:
     if db.scalar(select(Stop.id).where(Stop.name == name)) is not None:
         raise DuplicateStopName
 
-    stop = Stop(name=name, description=payload.description)
+    stop = Stop(
+        name=name,
+        description=payload.description,
+        service_area=payload.service_area.value,
+        verification_status=payload.verification_status.value,
+        is_active=payload.verification_status == VerificationStatus.VERIFIED,
+    )
     db.add(stop)
     try:
         db.commit()
@@ -93,6 +110,24 @@ def update_stop(db: Session, stop: Stop, payload: StopUpdate) -> Stop:
         )
 
     name = updates.get("name")
+    if "verification_status" in updates:
+        updates["verification_status"] = updates["verification_status"].value
+    if "service_area" in updates:
+        updates["service_area"] = updates["service_area"].value
+    if (
+        updates.get("verification_status") is not None
+        and updates["verification_status"] != VerificationStatus.VERIFIED.value
+        and "is_active" not in updates
+    ):
+        updates["is_active"] = False
+    if updates.get("is_active") is True and (
+        updates.get("verification_status", stop.verification_status)
+        != VerificationStatus.VERIFIED.value
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Only verified stops can be activated.",
+        )
     if name is not None:
         name = name.strip()
         existing = db.scalar(

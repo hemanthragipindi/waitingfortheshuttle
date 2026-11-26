@@ -123,6 +123,10 @@ All management APIs require an authenticated administrator; students can list an
 - Route stop ordering: create a route with ordered `stop_ids`; add with `POST /api/v1/routes/{route_id}/stops` and optional 1-based `position`; reorder with `PUT /api/v1/routes/{route_id}/stops/order`; remove with `DELETE /api/v1/routes/{route_id}/stops/{stop_id}`.
 - Shuttles: `GET /api/v1/shuttles`, `GET /api/v1/shuttles/{shuttle_id}`, `POST /api/v1/shuttles`, `PATCH /api/v1/shuttles/{shuttle_id}`. A shuttle can be assigned to an active route with `route_id`; send `null` to unassign.
 
+Transport records now support the `LPU`, `PHAGWARA`, and `JALANDHAR` service areas. Routes can advertise multiple service types (`CAMPUS_SHUTTLE`, `E_RICKSHAW`, `AUTO_RICKSHAW`, `PUBLIC_BUS`, `TRAIN`, or `OTHER`) while preserving the ordered `stop_ids` route input. Services identify whether they are university-operated or external public transport and can have an optional capacity when a public operator does not publish one. Stops, routes, and services carry `PLANNED`, `PENDING_VERIFICATION`, or `VERIFIED` state; unverified records are inactive and cannot be activated until an administrator marks them verified. The migration adds the supplied candidate locations as inactive, pending-verification stops without coordinates, timetables, fares, predictions, or GPS data.
+
+Student route and service lists accept `service_area`, `service_type`, `destination`, and current `status` filters where applicable. Service statuses include `ON_TIME`, `DELAYED`, `UNAVAILABLE`, `CANCELLED`, and `UNKNOWN`; the legacy `NOT_UPDATED` response remains used when no status has been recorded.
+
 Use Swagger UI at `http://127.0.0.1:8000/docs` to try the APIs. First provision an admin as above, then call `POST /api/v1/auth/admin/login` with its email/password. Swagger's same-origin session cookie is retained for subsequent requests. Create test-only stops, then a route using their returned IDs, followed by a shuttle assigned to that route. Duplicate names/codes return `409`; missing IDs return `404`; invalid route-stop order returns `422`. Deactivation uses `PATCH` with `{"is_active": false}`. The API does not seed routes or vehicles.
 
 ### Shuttle status, announcements, and feedback APIs
@@ -287,7 +291,7 @@ Example error responses:
 
 ## Configuration
 
-Copy each `.env.example` to `.env` for local development. Set `DATABASE_URL` and `JWT_SECRET_KEY` in `backend\.env` before running database-backed code. Never commit `.env` files or production secrets. For the Vercel frontend, set the project root to `frontend`, build with `npm run build`, and publish `dist`. `frontend\vercel.json` rewrites client-side routes to `index.html` so direct navigation and refresh work with React Router.
+Copy each `.env.example` to `.env` for local development. Set `DATABASE_URL` and `JWT_SECRET_KEY` in `backend\.env` before running database-backed code. Never commit `.env` files or production secrets. For Vercel, set the project root to `frontend`, build with `npm run build`, and publish `dist`. Copy the values from `frontend\vercel.env.example` into the Vercel project's Production Environment Variables, then redeploy; Vite reads these values at build time. `frontend\vercel.json` rewrites client-side routes to `index.html` so direct navigation and refresh work with React Router.
 
 ## Validation
 

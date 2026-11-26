@@ -18,13 +18,26 @@ class Shuttle(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "shuttles"
     __table_args__ = (
         UniqueConstraint("vehicle_code", name="uq_shuttles_vehicle_code"),
-        CheckConstraint("capacity > 0", name="ck_shuttles_capacity_positive"),
+        CheckConstraint(
+            "capacity IS NULL OR capacity > 0",
+            name="ck_shuttles_capacity_positive",
+        ),
         Index("ix_shuttles_route_id", "route_id"),
         Index("ix_shuttles_is_active", "is_active"),
+        Index("ix_shuttles_service_type", "service_type"),
     )
 
     vehicle_code: Mapped[str] = mapped_column(String(32), nullable=False)
-    capacity: Mapped[int] = mapped_column(Integer, nullable=False)
+    capacity: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    service_type: Mapped[str] = mapped_column(
+        String(32), nullable=False, server_default=text("'CAMPUS_SHUTTLE'")
+    )
+    is_university_operated: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("true")
+    )
+    verification_status: Mapped[str] = mapped_column(
+        String(24), nullable=False, server_default=text("'VERIFIED'")
+    )
     is_active: Mapped[bool] = mapped_column(
         Boolean,
         nullable=False,
