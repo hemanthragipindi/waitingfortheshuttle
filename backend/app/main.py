@@ -34,14 +34,22 @@ async def protect_cookie_authenticated_requests(
                 content={"detail": "Request origin is not allowed."},
             )
 
-        if request.cookies.get(current_settings.auth_cookie_name) and not same_origin:
-            csrf_cookie = request.cookies.get(current_settings.csrf_cookie_name)
-            csrf_header = request.headers.get("x-csrf-token")
-            if not is_valid_csrf_pair(csrf_cookie, csrf_header):
-                return JSONResponse(
-                    status_code=403,
-                    content={"detail": "A valid CSRF token is required."},
-                )
+        # Skip CSRF check for initial authentication endpoints (login / registration).
+        # An existing or stale access token cookie from a prior session must not block logging in.
+        auth_exempt_paths = {
+            f"{current_settings.api_v1_prefix}/auth/login",
+            f"{current_settings.api_v1_prefix}/auth/admin/login",
+            f"{current_settings.api_v1_prefix}/auth/register",
+        }
+        if request.url.path not in auth_exempt_paths:
+            if request.cookies.get(current_settings.auth_cookie_name) and not same_origin:
+                csrf_cookie = request.cookies.get(current_settings.csrf_cookie_name)
+                csrf_header = request.headers.get("x-csrf-token")
+                if not is_valid_csrf_pair(csrf_cookie, csrf_header):
+                    return JSONResponse(
+                        status_code=403,
+                        content={"detail": "A valid CSRF token is required."},
+                    )
 
     return await call_next(request)
 
@@ -53,6 +61,7 @@ if settings.allow_all_origins:
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
+        expose_headers=["*", "X-CSRF-Token", "x-csrf-token"],
     )
 else:
     app.add_middleware(
@@ -61,6 +70,7 @@ else:
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
+        expose_headers=["*", "X-CSRF-Token", "x-csrf-token"],
     )
 
 app.include_router(api_router, prefix=settings.api_v1_prefix)

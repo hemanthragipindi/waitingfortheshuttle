@@ -1,6 +1,6 @@
 import secrets
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_current_admin, get_current_user
@@ -43,12 +43,14 @@ def set_auth_cookies(response: Response, user: User) -> None:
         httponly=True,
         **cookie_options,
     )
+    csrf_token = secrets.token_urlsafe(32)
     response.set_cookie(
         key=settings.csrf_cookie_name,
-        value=secrets.token_urlsafe(32),
+        value=csrf_token,
         httponly=False,
         **cookie_options,
     )
+    response.headers["X-CSRF-Token"] = csrf_token
 
 
 def clear_auth_cookies(response: Response) -> None:
@@ -137,19 +139,29 @@ def admin_login(
 
 @router.get("/me", response_model=UserRead)
 def read_current_user(
+    request: Request,
     response: Response,
     current_user: User = Depends(get_current_user),
 ) -> User:
     response.headers["Cache-Control"] = "no-store"
+    settings = get_settings()
+    csrf_cookie = request.cookies.get(settings.csrf_cookie_name)
+    if csrf_cookie:
+        response.headers["X-CSRF-Token"] = csrf_cookie
     return current_user
 
 
 @router.get("/admin/me", response_model=UserRead)
 def read_current_admin(
+    request: Request,
     response: Response,
     current_admin: User = Depends(get_current_admin),
 ) -> User:
     response.headers["Cache-Control"] = "no-store"
+    settings = get_settings()
+    csrf_cookie = request.cookies.get(settings.csrf_cookie_name)
+    if csrf_cookie:
+        response.headers["X-CSRF-Token"] = csrf_cookie
     return current_admin
 
 
