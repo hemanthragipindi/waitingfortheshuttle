@@ -27,6 +27,7 @@ def anyio_backend() -> str:
 @pytest.fixture
 def auth_engine(monkeypatch: pytest.MonkeyPatch) -> Generator:
     monkeypatch.setenv("JWT_SECRET_KEY", "test-only-signing-secret-with-48-characters")
+    monkeypatch.setenv("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173")
     get_settings.cache_clear()
     engine = create_engine(
         "sqlite://",

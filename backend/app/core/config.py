@@ -9,7 +9,7 @@ class Settings(BaseSettings):
     app_name: str = "P05 Waiting for the Shuttle API"
     app_env: str = "development"
     api_v1_prefix: str = "/api/v1"
-    cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
+    cors_origins: str = "*"
     database_url: str | None = None
     jwt_secret_key: SecretStr | None = None
     jwt_access_token_minutes: int = Field(default=30, gt=0)
@@ -24,6 +24,10 @@ class Settings(BaseSettings):
     @property
     def cors_origin_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+
+    @property
+    def allow_all_origins(self) -> bool:
+        return "*" in self.cors_origin_list or self.cors_origins.strip() == "*"
 
 
 @lru_cache
