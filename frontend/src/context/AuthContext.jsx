@@ -16,8 +16,13 @@ export function AuthProvider({ children }) {
         if (active) setUser(data);
       })
       .catch((error) => {
-        if (active && error.response?.status !== 401) {
-          setAuthError("Unable to check your sign-in session. Please refresh the page.");
+        if (active) {
+          if (error.response?.status === 401) {
+            sessionStorage.removeItem("p05_access_token");
+            localStorage.removeItem("p05_access_token");
+          } else {
+            setAuthError("Unable to check your sign-in session. Please refresh the page.");
+          }
         }
       })
       .finally(() => {
@@ -31,6 +36,10 @@ export function AuthProvider({ children }) {
 
   const login = useCallback(async (credentials, isAdmin = false) => {
     const { data } = await authApi.login(credentials, isAdmin);
+    if (data.access_token) {
+      sessionStorage.setItem("p05_access_token", data.access_token);
+      localStorage.setItem("p05_access_token", data.access_token);
+    }
     setUser(data);
     setAuthError("");
     return data;
@@ -38,15 +47,25 @@ export function AuthProvider({ children }) {
 
   const register = useCallback(async (registration) => {
     const { data } = await authApi.register(registration);
+    if (data.access_token) {
+      sessionStorage.setItem("p05_access_token", data.access_token);
+      localStorage.setItem("p05_access_token", data.access_token);
+    }
     setUser(data);
     setAuthError("");
     return data;
   }, []);
 
   const logout = useCallback(async () => {
-    await authApi.logout();
-    setUser(null);
-    setAuthError("");
+    try {
+      await authApi.logout();
+    } finally {
+      sessionStorage.removeItem("p05_access_token");
+      localStorage.removeItem("p05_access_token");
+      sessionStorage.removeItem("p05_csrf_token");
+      setUser(null);
+      setAuthError("");
+    }
   }, []);
 
   const value = useMemo(

@@ -21,7 +21,7 @@ from app.services.auth_service import (
 router = APIRouter(prefix="/auth", tags=["authentication"])
 
 
-def set_auth_cookies(response: Response, user: User) -> None:
+def set_auth_cookies(response: Response, user: User) -> str:
     settings = get_settings()
     if settings.app_env.lower() == "production" and not settings.auth_cookie_secure:
         raise RuntimeError("AUTH_COOKIE_SECURE must be true in production.")
@@ -29,6 +29,8 @@ def set_auth_cookies(response: Response, user: User) -> None:
         raise RuntimeError("AUTH_COOKIE_SECURE must be true when SameSite=None.")
 
     response.headers["Cache-Control"] = "no-store"
+    token = create_access_token(user.id)
+    response.headers["X-Access-Token"] = token
     max_age = settings.jwt_access_token_minutes * 60
     cookie_options = {
         "max_age": max_age,
@@ -39,7 +41,7 @@ def set_auth_cookies(response: Response, user: User) -> None:
     }
     response.set_cookie(
         key=settings.auth_cookie_name,
-        value=create_access_token(user.id),
+        value=token,
         httponly=True,
         **cookie_options,
     )
@@ -51,6 +53,7 @@ def set_auth_cookies(response: Response, user: User) -> None:
         **cookie_options,
     )
     response.headers["X-CSRF-Token"] = csrf_token
+    return token
 
 
 def clear_auth_cookies(response: Response) -> None:
@@ -93,7 +96,8 @@ def _authenticate(
             headers={"WWW-Authenticate": "Bearer"},
         ) from exc
 
-    set_auth_cookies(response, user)
+    token = set_auth_cookies(response, user)
+    user.access_token = token
     return user
 
 
@@ -115,7 +119,8 @@ def register(
             detail="An account with this email already exists.",
         ) from exc
 
-    set_auth_cookies(response, user)
+    token = set_auth_cookies(response, user)
+    user.access_token = token
     return user
 
 

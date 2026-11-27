@@ -10,12 +10,23 @@ from app.db.session import get_db_session
 from app.models.user import User
 
 
+def _extract_access_token(request: Request, cookie_name: str) -> str | None:
+    auth_header = request.headers.get("authorization")
+    if auth_header:
+        parts = auth_header.split(None, 1)
+        if len(parts) == 2 and parts[0].lower() == "bearer":
+            token = parts[1].strip()
+            if token:
+                return token
+    return request.cookies.get(cookie_name)
+
+
 def get_current_user(
     request: Request,
     db: Session = Depends(get_db_session),
 ) -> User:
     settings = get_settings()
-    token = request.cookies.get(settings.auth_cookie_name)
+    token = _extract_access_token(request, settings.auth_cookie_name)
     if not token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -47,7 +58,7 @@ def get_optional_current_user(
     db: Session = Depends(get_db_session),
 ) -> User | None:
     settings = get_settings()
-    token = request.cookies.get(settings.auth_cookie_name)
+    token = _extract_access_token(request, settings.auth_cookie_name)
     if not token:
         return None
 

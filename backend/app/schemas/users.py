@@ -18,3 +18,4 @@ class UserRead(ORMModel):
     full_name: str
     role: UserRole
     is_active: bool
+    access_token: str | None = None

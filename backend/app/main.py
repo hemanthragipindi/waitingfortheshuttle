@@ -42,7 +42,13 @@ async def protect_cookie_authenticated_requests(
             f"{current_settings.api_v1_prefix}/auth/register",
         }
         if request.url.path not in auth_exempt_paths:
-            if request.cookies.get(current_settings.auth_cookie_name) and not same_origin:
+            auth_header = request.headers.get("authorization", "")
+            is_bearer_authenticated = auth_header.lower().startswith("bearer ")
+            if (
+                not is_bearer_authenticated
+                and request.cookies.get(current_settings.auth_cookie_name)
+                and not same_origin
+            ):
                 csrf_cookie = request.cookies.get(current_settings.csrf_cookie_name)
                 csrf_header = request.headers.get("x-csrf-token")
                 if not is_valid_csrf_pair(csrf_cookie, csrf_header):
@@ -61,7 +67,7 @@ if settings.allow_all_origins:
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
-        expose_headers=["*", "X-CSRF-Token", "x-csrf-token"],
+        expose_headers=["*", "X-Access-Token", "x-access-token", "X-CSRF-Token", "x-csrf-token"],
     )
 else:
     app.add_middleware(
@@ -70,7 +76,7 @@ else:
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
-        expose_headers=["*", "X-CSRF-Token", "x-csrf-token"],
+        expose_headers=["*", "X-Access-Token", "x-access-token", "X-CSRF-Token", "x-csrf-token"],
     )
 
 app.include_router(api_router, prefix=settings.api_v1_prefix)
